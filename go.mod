@@ -26,6 +26,7 @@ require (
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.3.0
 	github.com/kisielk/errcheck v1.6.2
 	github.com/klauspost/pgzip v1.2.6
+	github.com/konflux-ci/coverport/instrumentation/go v0.0.0-20260429123615-a5f190b78470
 	github.com/krolaw/dhcp4 v0.0.0-20180925202202-7cead472c414
 	github.com/kubernetes-csi/external-snapshotter/client/v4 v4.2.0
 	github.com/kubevirt/monitoring/pkg/metrics/parser v0.0.0-20230627123556-81a891d4462a

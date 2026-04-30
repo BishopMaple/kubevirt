@@ -290,6 +290,9 @@ github.com/klauspost/compress/internal/le
 # github.com/klauspost/pgzip v1.2.6
 ## explicit
 github.com/klauspost/pgzip
+# github.com/konflux-ci/coverport/instrumentation/go v0.0.0-20260429123615-a5f190b78470
+## explicit; go 1.21
+github.com/konflux-ci/coverport/instrumentation/go
 # github.com/krolaw/dhcp4 v0.0.0-20180925202202-7cead472c414
 ## explicit
 github.com/krolaw/dhcp4
