@@ -1,0 +1,10 @@
+.git
+_output
+_ci-configs
+cluster-up
+cluster-provision
+docs
+examples
+tests
+*.test
+*.o

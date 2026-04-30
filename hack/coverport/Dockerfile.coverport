@@ -1,0 +1,53 @@
+# Multi-stage Dockerfile for CoverPort-instrumented KubeVirt binaries.
+#
+# Stage 1: Build the selected component with coverage instrumentation.
+# Stage 2: Minimal runtime image with coverage data directory.
+#
+# Usage:
+#   podman build -f hack/coverport/Dockerfile.coverport \
+#     --build-arg COMPONENT=virt-api \
+#     -t kubevirt-coverport/virt-api:latest .
+
+# ---------- Stage 1: Builder ----------
+FROM golang:1.24 AS builder
+
+ARG COMPONENT=virt-api
+
+WORKDIR /src
+
+# Copy everything — kubevirt has deep cross-package dependencies.
+# The .dockerignore (or build context) should exclude _output, _ci-configs, etc.
+COPY . .
+
+# Build with coverage instrumentation.
+# -tags=coverage includes coverage_init.go (CoverPort HTTP server).
+# -cover + -covermode=atomic enables Go's runtime coverage collection.
+# The binary will expose coverage data on port 9095 when GOCOVERDIR is set.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build \
+      -tags=coverage \
+      -cover \
+      -covermode=atomic \
+      -o /out/${COMPONENT} \
+      ./cmd/${COMPONENT}/
+
+# ---------- Stage 2: Runtime ----------
+FROM registry.access.redhat.com/ubi9/ubi-micro:latest
+
+ARG COMPONENT=virt-api
+
+# Coverage data directory — must be writable by the non-root user.
+RUN mkdir -p /tmp/covdata && chmod 777 /tmp/covdata
+
+# Copy the instrumented binary.
+COPY --from=builder /out/${COMPONENT} /usr/bin/entry
+
+# Tell Go's coverage runtime where to write data.
+ENV GOCOVERDIR=/tmp/covdata
+
+# CoverPort HTTP server port (started by init() in coverage_init.go).
+EXPOSE 9095
+
+USER 1001
+
+ENTRYPOINT ["/usr/bin/entry"]
