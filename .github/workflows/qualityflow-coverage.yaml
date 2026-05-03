@@ -1,0 +1,114 @@
+name: QualityFlow Coverage
+
+on:
+  push:
+    branches: [main, coverport-instrumentation]
+  pull_request:
+    branches: [main]
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for merge-base
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run tests with coverage
+        run: |
+          # Run tests on packages that don't need native deps (libvirt etc.)
+          # Add more packages as needed — these are self-contained
+          go test -short -count=1 -coverprofile=coverage.out \
+            ./pkg/network/migration/... \
+            ./pkg/network/multus/... \
+            ./pkg/network/namescheme/... \
+            ./pkg/network/passt/... \
+            ./pkg/network/pod/annotations/... \
+            ./pkg/network/resources/... \
+            ./pkg/network/vmispec/... \
+            ./pkg/network/vmliveupdate/... \
+            ./pkg/virt-controller/watch/drain/... \
+            ./pkg/virt-launcher/virtwrap/converter/vcpu/... \
+            ./pkg/virt-launcher/virtwrap/converter/network/... \
+            ./pkg/virt-launcher/virtwrap/converter/storage/... \
+            || true  # don't fail on test failures — we still want to upload coverage
+
+          echo "Coverage file lines: $(wc -l < coverage.out)"
+
+      - name: Upload coverage to QualityFlow
+        if: always()
+        env:
+          QUALITYFLOW_URL: ${{ secrets.QUALITYFLOW_URL }}
+          QUALITYFLOW_API_KEY: ${{ secrets.QUALITYFLOW_API_KEY }}
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_EVENT: ${{ github.event_name }}
+          GH_JOB: ${{ github.job }}
+          GH_RUN_ID: ${{ github.run_id }}
+          GH_RUNNER_OS: ${{ runner.os }}
+          GH_RUNNER_ARCH: ${{ runner.arch }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ ! -f coverage.out ] || [ ! -s coverage.out ]; then
+            echo "No coverage data generated, skipping upload"
+            exit 0
+          fi
+
+          if [ -z "$QUALITYFLOW_URL" ]; then
+            echo "QUALITYFLOW_URL not set, skipping upload"
+            exit 0
+          fi
+
+          # Build JSON payload using Python (handles escaping safely)
+          python3 -c "
+          import json, os
+
+          cov = open('coverage.out').read()
+          payload = {
+              'project': 'cnv',
+              'source_repo': 'kubevirt/kubevirt',
+              'source_commit': os.environ['SOURCE_COMMIT'],
+              'source_branch': os.environ['SOURCE_BRANCH'],
+              'test_repo': os.environ['GH_REPOSITORY'],
+              'format': 'go',
+              'data': cov,
+              'create_check_run': True,
+              'post_pr_comment': bool(os.environ.get('PR_NUMBER', '')),
+              'metadata': {
+                  'ci_job': os.environ['GH_JOB'],
+                  'run_id': os.environ['GH_RUN_ID'],
+                  'runner': os.environ['GH_RUNNER_OS'] + '-' + os.environ['GH_RUNNER_ARCH'],
+                  'event': os.environ['GH_EVENT'],
+              },
+          }
+          pr = os.environ.get('PR_NUMBER', '')
+          if pr:
+              payload['test_pr'] = int(pr)
+
+          with open('/tmp/cov-payload.json', 'w') as f:
+              json.dump(payload, f)
+          "
+
+          RESPONSE=$(curl -sf -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: $QUALITYFLOW_API_KEY" \
+            -d @/tmp/cov-payload.json \
+            "$QUALITYFLOW_URL/api/coverage/test/upload" 2>&1) || {
+            echo "Upload failed (dashboard may not be reachable from GitHub runners)"
+            echo "$RESPONSE"
+            exit 0  # don't fail the workflow
+          }
+
+          echo "$RESPONSE" | python3 -m json.tool
+
+          # Extract key metrics
+          COVERAGE=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('totals',{}).get('coverage',0))")
+          DELTA=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('delta',0))")
+          echo "Coverage: ${COVERAGE}% (delta: ${DELTA}%)"
