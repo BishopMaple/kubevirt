@@ -115,43 +115,43 @@ func validateMultusNetworkNameFormat(field *k8sfield.Path, idx int, networkName 
 		if errs := k8svalidation.IsDNS1123Subdomain(parts[0]); len(errs) > 0 {
 			return []metav1.StatusCause{{
 				Type:    metav1.CauseTypeFieldValueInvalid,
-				Message: fmt.Sprintf("invalid NAD name %q: %s", networkName, strings.Join(errs, "; ")),
+				Message: fmt.Sprintf("NAD name %q is not valid: %s", networkName, strings.Join(errs, "; ")),
 				Field:   nadField.String(),
 			}}
 		}
 	case 2:
+		var causes []metav1.StatusCause
 		if parts[0] == "" {
-			return []metav1.StatusCause{{
+			causes = append(causes, metav1.StatusCause{
 				Type:    metav1.CauseTypeFieldValueInvalid,
-				Message: fmt.Sprintf("invalid NAD name %q: namespace must not be empty when using namespace/name format", networkName),
+				Message: fmt.Sprintf("NAD name %q is not valid: namespace must not be empty when using namespace/name format", networkName),
 				Field:   nadField.String(),
-			}}
+			})
+		} else if errs := k8svalidation.IsDNS1123Label(parts[0]); len(errs) > 0 {
+			causes = append(causes, metav1.StatusCause{
+				Type:    metav1.CauseTypeFieldValueInvalid,
+				Message: fmt.Sprintf("NAD name %q is not valid: namespace %q is not a valid DNS label: %s", networkName, parts[0], strings.Join(errs, "; ")),
+				Field:   nadField.String(),
+			})
 		}
 		if parts[1] == "" {
-			return []metav1.StatusCause{{
+			causes = append(causes, metav1.StatusCause{
 				Type:    metav1.CauseTypeFieldValueInvalid,
-				Message: fmt.Sprintf("invalid NAD name %q: name must not be empty when using namespace/name format", networkName),
+				Message: fmt.Sprintf("NAD name %q is not valid: name must not be empty when using namespace/name format", networkName),
 				Field:   nadField.String(),
-			}}
-		}
-		if errs := k8svalidation.IsDNS1123Subdomain(parts[0]); len(errs) > 0 {
-			return []metav1.StatusCause{{
+			})
+		} else if errs := k8svalidation.IsDNS1123Subdomain(parts[1]); len(errs) > 0 {
+			causes = append(causes, metav1.StatusCause{
 				Type:    metav1.CauseTypeFieldValueInvalid,
-				Message: fmt.Sprintf("invalid NAD name %q: namespace %q is not valid: %s", networkName, parts[0], strings.Join(errs, "; ")),
+				Message: fmt.Sprintf("NAD name %q is not valid: name %q is not valid: %s", networkName, parts[1], strings.Join(errs, "; ")),
 				Field:   nadField.String(),
-			}}
+			})
 		}
-		if errs := k8svalidation.IsDNS1123Subdomain(parts[1]); len(errs) > 0 {
-			return []metav1.StatusCause{{
-				Type:    metav1.CauseTypeFieldValueInvalid,
-				Message: fmt.Sprintf("invalid NAD name %q: name %q is not valid: %s", networkName, parts[1], strings.Join(errs, "; ")),
-				Field:   nadField.String(),
-			}}
-		}
+		return causes
 	default:
 		return []metav1.StatusCause{{
 			Type:    metav1.CauseTypeFieldValueInvalid,
-			Message: fmt.Sprintf("invalid NAD name %q: expected format <name> or <namespace>/<name>", networkName),
+			Message: fmt.Sprintf("NAD name %q is not valid: expected format <name> or <namespace>/<name>", networkName),
 			Field:   nadField.String(),
 		}}
 	}
