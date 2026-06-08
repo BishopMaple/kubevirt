@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfield "k8s.io/apimachinery/pkg/util/validation/field"
 
 	v1 "kubevirt.io/api/core/v1"
@@ -258,4 +259,49 @@ var _ = Describe("Validate network source", func() {
 		causes := validator.Validate()
 		Expect(causes).To(BeEmpty())
 	})
+
+	DescribeTable("should reject invalid Multus NAD network name", func(networkName, expectedMsgSubstring string) {
+		spec := &v1.VirtualMachineInstanceSpec{}
+		spec.Domain.Devices.Interfaces = []v1.Interface{{Name: "default"}}
+		spec.Networks = []v1.Network{{
+			Name:          "default",
+			NetworkSource: v1.NetworkSource{Multus: &v1.MultusNetwork{NetworkName: networkName}},
+		}}
+
+		validator := admitter.NewValidator(k8sfield.NewPath("fake"), spec, stubClusterConfigChecker{})
+		causes := validator.Validate()
+		Expect(causes).To(HaveLen(1))
+		Expect(causes[0].Type).To(Equal(metav1.CauseTypeFieldValueInvalid))
+		Expect(causes[0].Message).To(ContainSubstring(expectedMsgSubstring))
+		Expect(causes[0].Field).To(Equal("fake.networks[0].multus.networkName"))
+	},
+		Entry("uppercase in name", "foo/UPPER", "invalid NAD name"),
+		Entry("leading hyphen in name", "foo/-invalid", "invalid NAD name"),
+		Entry("trailing hyphen in name", "foo/invalid-", "invalid NAD name"),
+		Entry("empty namespace", "/name", "namespace must not be empty"),
+		Entry("empty name", "ns/", "name must not be empty"),
+		Entry("multiple slashes", "a/b/c", "expected format"),
+		Entry("trailing dot in standalone name", "not.valid.name.", "invalid NAD name"),
+		Entry("uppercase standalone name", "UPPER", "invalid NAD name"),
+		Entry("uppercase namespace", "UPPER/my-nad", "invalid NAD name"),
+	)
+
+	DescribeTable("should accept valid Multus NAD network name", func(networkName string) {
+		spec := &v1.VirtualMachineInstanceSpec{}
+		spec.Domain.Devices.Interfaces = []v1.Interface{{Name: "default"}}
+		spec.Networks = []v1.Network{{
+			Name:          "default",
+			NetworkSource: v1.NetworkSource{Multus: &v1.MultusNetwork{NetworkName: networkName}},
+		}}
+
+		validator := admitter.NewValidator(k8sfield.NewPath("fake"), spec, stubClusterConfigChecker{})
+		causes := validator.Validate()
+		Expect(causes).To(BeEmpty())
+	},
+		Entry("simple name", "my-nad"),
+		Entry("namespaced name", "default/my-nad"),
+		Entry("namespaced name with numbers", "my-namespace/my-nad-123"),
+		Entry("name with dots (valid subdomain)", "my.nad"),
+		Entry("namespaced name with dots", "my-namespace/my.nad"),
+	)
 })
