@@ -1,0 +1,113 @@
+# CNV-specific review rules overlay
+# Loaded by stp-reviewer and std-reviewer skills when reviewing CNV project artifacts.
+# Projects without this file still get full reviews using built-in general rules.
+project_id: cnv
+
+stp_rules:
+  abstraction:
+    internal_components:
+      - "controller"
+      - "reconciler"
+      - "evaluator"
+      - "sync"
+      - "virt-handler"
+      - "virt-launcher"
+    internal_to_user_mappings:
+      "pod": "VM"
+      "virt-launcher": "virtual machine process"
+      "VMI status": "VM running state"
+    acceptable_locations:
+      - "Technology Challenges (I.2 Comments)"
+      - "Risks (II.5)"
+      - "Comments columns"
+      - "Known Limitations (I.2)"
+
+  dependencies:
+    infrastructure_not_dependency:
+      - "Multus CNI"
+      - "OVS bridge"
+      - "shared storage"
+    dependency_examples:
+      - "HCO team must add feature gate to HyperConverged CR"
+      - "Storage team must deliver new CSI driver"
+      - "Another SIG must merge prerequisite PR"
+
+  upgrade:
+    persistent_state_indicators:
+      - "CRD"
+      - "stored config"
+      - "running VM with feature-dependent data"
+
+  testing_tools:
+    standard_tools:
+      - "Ginkgo"
+      - "pytest"
+      - "kubectl"
+      - "oc"
+      - "virtctl"
+    standard_frameworks:
+      - "Ginkgo v2"
+      - "Go test"
+      - "Prow"
+      - "OpenShift CI"
+
+  strategy:
+    always_y: ["Functional Testing", "Automation Testing"]
+    requires_justification_for_y:
+      "Performance Testing": "latency/throughput requirements"
+      "Security Testing": "RBAC, auth, or security boundary changes"
+      "Usability Testing": "UI component"
+
+  metadata:
+    sig_field: "Owning SIG"
+    version_source: "fix_version"
+
+  scope:
+    layered_product:
+      name: "OCP-V"
+      platform: "OCP"
+      platform_teams:
+        - "OCP Network"
+        - "OCP Storage"
+      ownership_note: >
+        As a layered product, OCP-V assumes platform features work correctly.
+        Test scenarios should focus on VM-specific behavior.
+
+std_rules:
+  patterns:
+    keyword_to_pattern:
+      connectivity: "network-connectivity-001"
+      migration: "migration-001"
+      hotplug: "network-hotplug-001"
+      lifecycle: "vm-lifecycle-001"
+      console: "console-001"
+      snapshot: "snapshot-001"
+      clone: "clone-001"
+    pattern_to_helpers:
+      network-connectivity-001: ["libvmifact", "libnet", "libwait"]
+      factory-001: ["libvmifact", "libvmi"]
+      migration-001: ["libvmifact", "libmigration"]
+      console-001: ["console"]
+      factory-pod-001: ["libpod"]
+      network-nad-001: ["libnet"]
+      wait-002: ["libwait"]
+    sig_to_decorator:
+      network: "decorators.SigNetwork"
+      compute: "decorators.SigCompute"
+      storage: "decorators.SigStorage"
+    closure_scope_required: ["ctx", "namespace"]
+    test_id_format: "TS-{JIRA_ID}-{NUM:03d}"
+    ginkgo_structure: "Context -> BeforeAll -> It"
+
+  timeouts:
+    vm_startup: "medium to large"
+    migration: "migration_timeout"
+    api_call: "tiny to small"
+    network_connectivity: "small to medium"
+
+  stub_conventions:
+    go_pending: "PendingIt()"
+    go_skip: "Skip()"
+    python_pending: "pass"
+    python_test_disabled: "__test__ = False"
+    go_package_from_sig: true

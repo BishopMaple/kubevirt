@@ -1,0 +1,60 @@
+# Example Project Configuration
+# Copy this directory to create your own project config.
+#
+# Steps:
+#   1. cp -r config/projects/example config/projects/my-project
+#   2. Edit each YAML file with your project's real values
+#   3. Add route(s) in config/routing.yaml
+#   4. Set feature_toggles to enable/disable capabilities
+
+project_id: "example"                          # Must match directory name
+display_name: "My Project"                     # Human-readable name
+description: "Short description of the project"
+
+feature_toggles:
+  # Override defaults from _defaults.yaml. Only list toggles you want to change.
+  polarion: false       # true = add Polarion markers to generated tests
+  go_tests: true        # true = enable Go test generation
+  python_tests: true    # true = enable Python test generation
+  # stp_generation: true
+  # std_generation: true
+  # lsp_analysis: true
+  # pii_sanitization: true
+  # repo_files_fetch: true
+
+# Test scope → language routing.
+# Controls which language generator handles each test classification.
+# This decouples test scope (Functional vs E2E) from implementation language.
+test_routing:
+  functional: go        # "go" or "python" — which generator handles Functional scenarios
+  e2e: python           # "go" or "python" — which generator handles E2E scenarios
+
+versioning:
+  product_name: "My Product"
+  platform_name: "Kubernetes"
+  current_version: "1.0"
+
+stp_document:
+  header: "My-Project Test Plan"
+
+# Map SIG labels from Jira to short names used in test organization
+sig_mappings:
+  # sig-networking: "networking"
+  # sig-data: "data"
+
+# Map SIG labels to Go decorator functions (Go tests only)
+decorator_mappings:
+  # sig-networking: "decorators.SigNetwork"
+
+# Define what's in-scope for this project's testing
+scope_boundaries:
+  validation_gate: "Would removing this project's core component make this test meaningless?"
+  in_scope_resources: []
+    # - "MyCustomResource"
+  out_of_scope_if_only: []
+    # - "Pod"
+    # - "Deployment"
+  cli_tools: []
+    # - "kubectl"
+  domain_vocabulary: []
+    # - "MyTerm"

@@ -1,0 +1,48 @@
+# Repository Configuration
+# Defines source code repositories for this project.
+
+primary_repo:
+  name: "my-project"                          # Repository name
+  org: "my-org"                               # GitHub org or user
+  full_name: "my-org/my-project"
+  url: "https://github.com/my-org/my-project"
+  default_branch: "main"
+  language: "go"                              # "go" or "python"
+  build_system: "make"                        # "bazel", "make", "go", etc.
+  # build_command: "make test"
+
+# Optional: End-to-End test repository (if tests live in a separate repo)
+# e2e_repo:
+#   name: "my-project-tests"
+#   org: "my-org"
+#   full_name: "my-org/my-project-tests"
+#   url: "https://github.com/my-org/my-project-tests"
+#   default_branch: "main"
+#   language: "python"
+
+# Optional: design documentation repository
+# design_docs_repo:
+#   name: "my-project-design-docs"
+#   org: "my-org"
+#   full_name: "my-org/my-project-design-docs"
+#   url: "https://github.com/my-org/my-project-design-docs"
+#   default_branch: "main"
+
+# Files auto-fetched from repos at pipeline runtime (project-resolver Step 9).
+# Each entry maps a logical name to a repo + file path.
+# If fetch fails, falls back to local copy in this config directory.
+# repo_files:
+#   agents_rules:
+#     repo: "e2e_repo"
+#     path: "AGENTS.md"
+#     fallback: null
+#     description: "Coding standards and test design workflow"
+#
+#   stp_template:
+#     repo: "design_docs_repo"
+#     path: "docs/stp-template.md"
+#     fallback: "templates/stp/stp-template.md"
+#     description: "Official STP template structure"
+
+pr_url_patterns:
+  - "https://github.com/{org}/{repo}/pull/{number}"

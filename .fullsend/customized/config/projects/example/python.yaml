@@ -1,0 +1,25 @@
+# Python Test Configuration
+# Required when feature_toggles.python_tests = true
+
+enabled: true
+language: "python"
+framework: "pytest"
+
+# Python packages used by the test framework
+# python_packages:
+#   wrapper: "my-python-wrapper"
+
+# Import patterns for generated test files
+import_patterns:
+  standard:
+    - "import logging"
+    - "import pytest"
+
+# Polarion integration (if enabled in feature_toggles)
+# polarion:
+#   marker_format: 'pytest.mark.polarion("{ID}")'
+#   id_prefix: "MYPROJ-"
+
+# Fixtures available globally in the test framework
+# global_fixtures:
+#   - "admin_client"

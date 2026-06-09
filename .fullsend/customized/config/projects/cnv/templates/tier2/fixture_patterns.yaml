@@ -1,0 +1,158 @@
+# Common Fixture Patterns for pytest Code Generation
+# Version: 1.0
+
+# NAMESPACE FIXTURES
+# ═══════════════════════════════════════════════════════════════════════════
+
+namespace_fixtures:
+  - name: "test_namespace"
+    description: "Create test namespace with cleanup"
+    code: |
+      @pytest.fixture
+      def test_namespace():
+          namespace = Namespace(name="{namespace_name}")
+          namespace.create()
+          yield namespace
+          namespace.delete()
+
+  - name: "test_namespace_with_labels"
+    description: "Create test namespace with labels"
+    code: |
+      @pytest.fixture
+      def test_namespace():
+          namespace = Namespace(
+              name="{namespace_name}",
+              label={"test-suite": "{jira_id}", "test-tier": "{tier}"}
+          )
+          namespace.create()
+          yield namespace
+          namespace.delete()
+
+# VMI FIXTURES
+# ═══════════════════════════════════════════════════════════════════════════
+
+vmi_fixtures:
+  - name: "minimal_vmi"
+    description: "Create minimal VMI with Cirros container disk"
+    code: |
+      @pytest.fixture
+      def minimal_vmi(test_namespace):
+          vmi = VirtualMachineInstance(
+              name="test-vmi",
+              namespace=test_namespace.name,
+              body={
+                  "spec": {
+                      "domain": {
+                          "cpu": {"cores": 1},
+                          "resources": {"requests": {"memory": "128Mi"}},
+                          "devices": {
+                              "disks": [{"name": "containerdisk", "disk": {"bus": "virtio"}}],
+                              "interfaces": [{"name": "default", "masquerade": {}}]
+                          }
+                      },
+                      "networks": [{"name": "default", "pod": {}}],
+                      "volumes": [
+                          {
+                              "name": "containerdisk",
+                              "containerDisk": {
+                                  "image": "registry:5000/kubevirt/cirros-container-disk-demo:latest"
+                              }
+                          }
+                      ]
+                  }
+              }
+          )
+          vmi.create()
+          vmi.wait_until_running(timeout=300)
+          yield vmi
+          vmi.delete()
+
+  - name: "running_vmi"
+    description: "Create VMI and wait for Running state"
+    code: |
+      @pytest.fixture
+      def running_vmi(test_namespace):
+          vmi = VirtualMachineInstance(
+              name="{vmi_name}",
+              namespace=test_namespace.name,
+              # ... from STD test_data.vmi_definition
+          )
+          vmi.create()
+          vmi.wait_until_running(timeout=300)
+
+          # Validate virt-launcher pod is running
+          assert vmi.virt_launcher_pod.status == "Running"
+
+          yield vmi
+          vmi.delete()
+
+# HELPER FUNCTION PATTERNS
+# ═══════════════════════════════════════════════════════════════════════════
+
+helper_patterns:
+  - name: "get_virt_launcher_pod_uid"
+    description: "Capture virt-launcher pod UID"
+    code: |
+      def get_virt_launcher_pod_uid(vmi):
+          """Capture virt-launcher pod UID"""
+          pod = vmi.virt_launcher_pod
+          return pod.instance.metadata.uid
+
+  - name: "wait_for_vmi_reboot"
+    description: "Wait for VMI to reboot and return to Running state"
+    code: |
+      def wait_for_vmi_reboot(vmi, timeout=300):
+          """Wait for VMI to reboot and return to Running state"""
+          vmi.wait_until_running(timeout=timeout)
+
+  - name: "verify_api_response"
+    description: "Verify API response status code"
+    code: |
+      def verify_api_response(response, expected_status=200):
+          """Verify API response status code"""
+          assert response.status_code == expected_status, \
+              f"Expected HTTP {expected_status}, got {response.status_code}"
+
+# ASSERTION PATTERNS
+# ═══════════════════════════════════════════════════════════════════════════
+
+assertion_patterns:
+  - name: "assert_pod_uid_unchanged"
+    description: "Assert pod UID unchanged after operation"
+    code: |
+      assert pod_uid_after == pod_uid_before, \
+          f"CRITICAL: Operation changed pod UID: {pod_uid_before} → {pod_uid_after}"
+
+  - name: "assert_pod_uid_changed"
+    description: "Assert pod UID changed after operation"
+    code: |
+      assert pod_uid_after != pod_uid_before, \
+          f"CRITICAL: Operation did not change pod UID: {pod_uid_before} == {pod_uid_after}"
+
+  - name: "assert_vmi_running"
+    description: "Assert VMI is in Running state"
+    code: |
+      assert vmi.status.phase == "Running", \
+          f"VMI not in Running state: {vmi.status.phase}"
+
+  - name: "assert_http_status"
+    description: "Assert HTTP status code"
+    code: |
+      assert response.status_code == {expected_code}, \
+          f"Expected HTTP {expected_code}, got {response.status_code}"
+
+# PYTEST MARKERS
+# ═══════════════════════════════════════════════════════════════════════════
+
+pytest_markers:
+  tier1: "@pytest.mark.tier1"
+  tier2: "@pytest.mark.tier2"
+  p0: "@pytest.mark.p0"
+  p1: "@pytest.mark.p1"
+  p2: "@pytest.mark.p2"
+  critical: "@pytest.mark.critical"
+  smoke: "@pytest.mark.smoke"
+  regression: "@pytest.mark.regression"
+  functional: "@pytest.mark.functional"
+  integration: "@pytest.mark.integration"
+  e2e: "@pytest.mark.e2e"

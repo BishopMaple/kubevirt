@@ -1,0 +1,13 @@
+# QualityFlow Project Routing Map
+# Maps Jira issue prefixes to project configurations
+version: "1.0"
+
+routes:
+  - prefix: "CNV"
+    project: "cnv"
+  - prefix: "MYPROJ"
+    project: "example"
+
+# "example" = use example project for unknown prefixes
+# null = error on unknown prefix (fail-fast)
+default_project: "example"

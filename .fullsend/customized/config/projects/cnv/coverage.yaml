@@ -1,0 +1,132 @@
+# Coverage tracking configuration for CNV project
+#
+# Coverage data is uploaded directly to the QualityFlow dashboard
+# via POST /api/coverage/upload (no external service dependency).
+#
+# local_path: absolute path to the repo clone on this machine.
+#             When set, the dashboard can run tests and collect coverage
+#             with a single click (POST /api/coverage/collect).
+# language:   go | python — determines test runner
+# test_packages: list of Go package patterns to test (default: ./...)
+#                Use specific patterns to avoid packages with platform-specific deps.
+# test_paths:  list of pytest paths for Python e2e repos (default: .)
+# timeout:     max test execution time in seconds (default: 7200)
+#
+# Python repos with 'e2e-tests' flag run as K8s Jobs on the cluster
+# (separate pod with cluster access, 8Gi memory, 4 CPU).
+
+repos:
+  - service: github
+    org: kubevirt
+    repo: kubevirt
+    label: "kubevirt/kubevirt"
+    type: primary
+    language: go
+    local_path: /Users/goron/Desktop/kubevirt-repos/kubevirt
+    test_packages:
+      - ./pkg/apimachinery/...
+      - ./pkg/certificates/...
+      - ./pkg/controller/...
+      - ./pkg/defaults/...
+      - ./pkg/network/namescheme/...
+      - ./pkg/network/passt/...
+      - ./pkg/network/pod/...
+      - ./pkg/network/vmispec/...
+      - ./pkg/network/vmliveupdate/...
+      - ./pkg/util/net/...
+      - ./pkg/util/openapi/...
+      - ./pkg/util/tls/...
+      - ./pkg/virt-launcher/virtwrap/converter/arch/...
+      - ./pkg/virt-launcher/virtwrap/converter/metadata/...
+      - ./pkg/virt-launcher/virtwrap/converter/network/...
+      - ./pkg/virt-launcher/virtwrap/converter/storage/...
+      - ./pkg/virt-launcher/virtwrap/converter/vcpu/...
+    flags:
+      - unit-tests
+      - e2e-tests
+
+  - service: github
+    org: RedHatQE
+    repo: openshift-virtualization-tests
+    label: "RedHatQE/openshift-virtualization-tests"
+    type: tier2
+    language: python
+    flags:
+      - e2e-tests
+    # Fix Python 2 syntax in upstream repo (except A, B: → except (A, B):)
+    pre_test_commands:
+      - "sed -i 's/except ResourceNotFoundError, NotFoundError:/except (ResourceNotFoundError, NotFoundError):/' utilities/infra.py"
+    # Don't fail-fast — run all tests to maximize coverage
+    pytest_args:
+      - "--no-header"
+      - "-rN"
+
+  - service: github
+    org: kubevirt
+    repo: containerized-data-importer
+    label: "kubevirt/containerized-data-importer"
+    type: additional
+    language: go
+    flags:
+      - unit-tests
+      - e2e-tests
+
+# ---------------------------------------------------------------------------
+# Product coverage — collect from running CoverPort-instrumented pods.
+#
+# CoverPort (github.com/konflux-ci/coverport) instruments Go binaries by:
+#   1. Adding a blank import: _ "github.com/konflux-ci/coverport/instrumentation/go"
+#   2. Building with: go build -cover -covermode=atomic
+#   3. Setting GOCOVERDIR=/tmp/covdata at runtime
+#
+# The instrumentation starts an HTTP server on port 53700 (configurable via
+# COVERAGE_PORT env var) that serves live coverage data from runtime/coverage.
+#
+# Collection methods:
+#   - Dashboard "Collect from Pods" button (uses K8s API pod proxy)
+#   - CoverPort Tekton task in pipeline finally block (recommended for CI)
+#   - coverport CLI: coverport collect --kubeconfig ... --namespace ...
+#
+# namespace:          K8s namespace where instrumented pods run
+# port:               CoverPort HTTP server port (default: 53700)
+# instrumented_images: container image refs to match pods (CoverPort convention)
+# components:         list of product components to collect from
+#   name:             human-readable component name
+#   image:            instrumented container image ref (preferred discovery method)
+#   label_selector:   K8s label selector fallback for pod discovery
+#   language:         go | python — determines coverage format parsing
+#
+# Integration status:
+#   onboarding:       not_started | pr_created | merged
+#   collection:       not_configured | tekton_ready | active
+#   notes:            human-readable status for dashboard display
+# ---------------------------------------------------------------------------
+product_coverage:
+  namespace: kubevirt
+  port: 53700
+  # CoverPort reference implementation: github.com/konflux-ci/coverport
+  # Real-world example: github.com/konflux-ci/build-service (Dockerfile with ENABLE_COVERAGE arg)
+  integration_status:
+    onboarding: not_started
+    collection: not_configured
+    notes: >
+      Pending: kubevirt team needs to add CoverPort blank import and
+      ENABLE_COVERAGE Dockerfile arg. See onboarding PR template in
+      dashboard for exact changes needed.
+  components:
+    - name: virt-handler
+      image: ""  # Will be set after instrumented images are built
+      label_selector: "kubevirt.io=virt-handler"
+      language: go
+    - name: virt-controller
+      image: ""
+      label_selector: "kubevirt.io=virt-controller"
+      language: go
+    - name: virt-api
+      image: ""
+      label_selector: "kubevirt.io=virt-api"
+      language: go
+    - name: virt-operator
+      image: ""
+      label_selector: "kubevirt.io=virt-operator"
+      language: go

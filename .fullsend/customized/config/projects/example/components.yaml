@@ -1,0 +1,17 @@
+# Component-to-Package Mappings
+# Maps project components to their source code paths.
+# Used by regression-analyzer for LSP tracing and by tier-classifier.
+
+component_package_map:
+  # component-name:
+  #   package_path: "pkg/component/"
+  #   features:
+  #     - { name: "Feature A", path: "pkg/component/feature-a/" }
+  #     - { name: "Feature B", path: "pkg/component/feature-b/" }
+  main:
+    package_path: "pkg/"
+    features: []
+
+# Reverse map: path prefix -> feature name (for LSP pattern resolution)
+path_to_feature: {}
+  # "pkg/component/feature-a/": "Feature A"

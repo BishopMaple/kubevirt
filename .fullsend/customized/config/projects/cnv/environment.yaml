@@ -1,0 +1,35 @@
+platform:
+  name: "OpenShift Container Platform"
+  short_name: "OCP"
+  cli_tools:
+    - "oc"
+    - "kubectl"
+    - "virtctl"
+
+cluster_requirements:
+  topology: "Multi-node"
+  cpu_virtualization: "Standard"
+  min_worker_nodes: 2
+
+version_constraints:
+  ocp: "4.22+"
+  cnv: "4.22+"
+  kubernetes: "1.29+"
+
+operators:
+  - name: "OpenShift Virtualization"
+    namespace: "openshift-cnv"
+    csv_pattern: "kubevirt-hyperconverged"
+  - name: "HyperConverged Cluster Operator"
+    namespace: "openshift-cnv"
+    csv_pattern: "hco-operator"
+
+network:
+  cni: "OVN-Kubernetes"
+  multus: true
+  sriov_operator: "optional"
+
+storage:
+  default_class: "ocs-storagecluster-ceph-rbd"
+  block_storage: true
+  shared_storage: true

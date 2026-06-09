@@ -1,0 +1,29 @@
+# Go Test Configuration
+# Required when feature_toggles.go_tests = true
+
+enabled: true
+language: "go"
+framework: "ginkgo-v2"
+default_package: "tests"
+
+# Go import paths for generated test files
+import_base: "github.com/my-org/my-project"
+imports:
+  dot_imports:
+    - "github.com/onsi/ginkgo/v2"
+    - "github.com/onsi/gomega"
+  standard:
+    - "context"
+    - "time"
+  # project_api:
+  #   - { path: "github.com/my-org/my-project/api/v1", alias: "v1" }
+
+# Helper libraries available in the test framework
+# helper_libraries:
+#   libutil: "github.com/my-org/my-project/tests/libutil"
+
+# Timeout constants defined in the test framework
+# timeout_constants:
+#   small: "TimeoutSmall"
+#   medium: "TimeoutMedium"
+#   large: "TimeoutLarge"

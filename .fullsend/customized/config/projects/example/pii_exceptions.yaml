@@ -1,0 +1,20 @@
+# PII Sanitization Exceptions
+# Names listed here are allowed in generated documents without replacement.
+
+allowed_product_names: []
+  # - "My Product"
+
+allowed_project_names: []
+  # - "Kubernetes"
+  # - "Ginkgo"
+  # - "pytest"
+
+allowed_technical_standards: []
+  # - "NVMe"
+  # - "iSCSI"
+
+vendor_replacements:
+  gpu: "GPU Vendor"
+  nic: "NIC Vendor"
+  storage: "Storage Vendor"
+  cloud: "Cloud Provider"

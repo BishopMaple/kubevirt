@@ -1,0 +1,21 @@
+# Platform and Environment Requirements
+# Describes the runtime environment for generated tests.
+
+platform:
+  name: "Kubernetes"
+  short_name: "K8s"
+  cli_tools:
+    - "kubectl"
+
+cluster_requirements:
+  topology: "Single-node"
+  min_worker_nodes: 1
+
+version_constraints:
+  kubernetes: "1.28+"
+
+# List operators or dependencies required by the test environment
+# operators:
+#   - name: "My Operator"
+#     namespace: "my-namespace"
+#     deployment_pattern: "my-operator"

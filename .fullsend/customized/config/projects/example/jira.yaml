@@ -1,0 +1,17 @@
+# Jira Instance Configuration
+# Defines how to connect to and query your Jira instance.
+
+instance:
+  url: "https://your-jira.atlassian.net"
+  browse_pattern: "https://your-jira.atlassian.net/browse/{key}"
+
+prefixes:
+  - "MYPROJ"
+  # - "ALIAS"
+
+# Custom Jira fields used to extract PR links and feature references
+custom_fields:
+  # feature_link: "Feature Link"
+  # git_pull_request: "Git Pull Request"
+
+pr_url_scan_pattern: "https://github.com/.*/pull/\\d+"
