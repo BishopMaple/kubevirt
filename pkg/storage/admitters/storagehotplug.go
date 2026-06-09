@@ -103,7 +103,7 @@ func ValidateHotplugDiskConfiguration(disk *v1.Disk, name, messagePrefix, field 
 	default:
 		return []metav1.StatusCause{{
 			Type:    metav1.CauseTypeFieldValueInvalid,
-			Message: fmt.Sprintf("%s for [%s] requires diskDevice of type 'disk', 'lun', or 'cdrom' to be used.", messagePrefix, name),
+			Message: fmt.Sprintf("%s for [%s] requires diskDevice of type 'disk', 'LUN', or 'CD-ROM' to be used.", messagePrefix, name),
 			Field:   field,
 		}}
 	}
