@@ -197,6 +197,12 @@ jobs:
           version: latest
           target-repo: ${{ github.workspace }}/pr-repo
 
+      - name: Refresh GCP credentials (Stage 2)
+        uses: ./.defaults/.github/actions/setup-gcp
+        with:
+          gcp_wif_provider: ${{ secrets.FULLSEND_GCP_WIF_PROVIDER }}
+          gcp_project_id: ${{ secrets.FULLSEND_GCP_PROJECT_ID }}
+
       - name: "QF Stage 2: STD Builder"
         uses: ./.defaults/
         env:
@@ -214,6 +220,12 @@ jobs:
           agent: std-builder
           version: latest
           target-repo: ${{ github.workspace }}/pr-repo
+
+      - name: Refresh GCP credentials (Stage 3)
+        uses: ./.defaults/.github/actions/setup-gcp
+        with:
+          gcp_wif_provider: ${{ secrets.FULLSEND_GCP_WIF_PROVIDER }}
+          gcp_project_id: ${{ secrets.FULLSEND_GCP_PROJECT_ID }}
 
       - name: "QF Stage 3: Go Test Generator"
         uses: ./.defaults/
