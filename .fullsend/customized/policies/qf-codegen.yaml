@@ -19,7 +19,7 @@ network_policies:
     endpoints:
       - host: "*.googleapis.com"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
     binaries:
@@ -31,12 +31,12 @@ network_policies:
     endpoints:
       - host: "api.github.com"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
       - host: "github.com"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
     binaries:
@@ -48,7 +48,7 @@ network_policies:
     endpoints:
       - host: "registry.npmjs.org"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
     binaries:
@@ -60,17 +60,17 @@ network_policies:
     endpoints:
       - host: "proxy.golang.org"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
       - host: "sum.golang.org"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
       - host: "storage.googleapis.com"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
     binaries:
@@ -81,12 +81,12 @@ network_policies:
     endpoints:
       - host: "pypi.org"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
       - host: "files.pythonhosted.org"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
     binaries:

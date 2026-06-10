@@ -22,7 +22,7 @@ network_policies:
     endpoints:
       - host: "*.googleapis.com"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
     binaries:
@@ -35,7 +35,7 @@ network_policies:
     endpoints:
       - host: "*.atlassian.net"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
     binaries:
@@ -46,7 +46,7 @@ network_policies:
     endpoints:
       - host: "registry.npmjs.org"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
     binaries:
@@ -58,12 +58,12 @@ network_policies:
     endpoints:
       - host: "api.github.com"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
       - host: "github.com"
         port: 443
-        protocol: tcp
+        protocol: rest
         enforcement: enforce
         access: allow
     binaries:
