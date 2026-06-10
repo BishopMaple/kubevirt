@@ -1,0 +1,27 @@
+version: 1
+
+# Sandbox policy for agents that only need Claude inference (no external APIs).
+# Used by: std-builder, std-reviewer, std-refiner
+
+filesystem_policy:
+  include_workdir: true
+  read_only: [/usr, /lib, /proc, /dev/urandom, /app, /etc, /var/log]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: best_effort
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies:
+  vertex_ai:
+    name: vertex-ai
+    endpoints:
+      - host: "*.googleapis.com"
+        port: 443
+        protocol: tcp
+        enforcement: enforce
+        access: allow
+    binaries:
+      - path: "**/claude"
+      - path: "**/node"

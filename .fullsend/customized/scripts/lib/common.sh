@@ -30,19 +30,8 @@ require_jira_format() {
 }
 
 # require_config — Validate the QF config directory exists.
-# On the runner (pre-script), check relative to FULLSEND_DIR or SCRIPT_DIR.
-# In the sandbox (agent), config is at /tmp/workspace/agent-input.
 require_config() {
-  local config_dir="${QF_CONFIG_DIR:-}"
-  if [[ -z "${config_dir}" ]]; then
-    if [[ -n "${FULLSEND_DIR:-}" ]]; then
-      config_dir="${FULLSEND_DIR}/config"
-    else
-      local script_dir
-      script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-      config_dir="${script_dir}/config"
-    fi
-  fi
+  local config_dir="${QF_CONFIG_DIR:-/tmp/workspace/agent-input}"
   if [[ ! -d "${config_dir}" ]]; then
     echo "::error::Config directory not found: ${config_dir}"
     return 1
@@ -74,97 +63,6 @@ scan_output_secrets() {
     fi
   else
     echo "::warning::gitleaks not installed — skipping secret scan"
-  fi
-}
-
-# --- PR helpers (for post-fix-style QualityFlow) ---
-
-# require_pr_env — Validate PR context variables.
-require_pr_env() {
-  require_env PR_NUMBER REPO_FULL_NAME GH_TOKEN
-}
-
-# extract_jira_from_pr — Extract Jira ticket ID from PR title or body.
-# Usage: JIRA_TICKET=$(extract_jira_from_pr "$PR_NUMBER" "$REPO_FULL_NAME")
-extract_jira_from_pr() {
-  local pr_number="$1"
-  local repo="$2"
-  local ticket=""
-
-  local title
-  title=$(gh api "repos/${repo}/pulls/${pr_number}" --jq '.title' 2>/dev/null || true)
-  if [[ -n "${title}" ]]; then
-    ticket=$(printf '%s\n' "${title}" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -1 || true)
-  fi
-
-  if [[ -z "${ticket}" ]]; then
-    local body
-    body=$(gh api "repos/${repo}/pulls/${pr_number}" --jq '.body' 2>/dev/null || true)
-    if [[ -n "${body}" ]]; then
-      ticket=$(printf '%s\n' "${body}" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -1 || true)
-    fi
-  fi
-
-  echo "${ticket}"
-}
-
-# record_pre_agent_head — Capture HEAD SHA before agent runs (for diff scoping).
-# Usage: PRE_AGENT_HEAD=$(record_pre_agent_head "$PR_CHECKOUT_PATH")
-record_pre_agent_head() {
-  local repo_path="$1"
-  local head
-  head=$(git -C "${repo_path}" rev-parse HEAD)
-  echo "PRE_AGENT_HEAD=${head}" >> "${GITHUB_ENV:-/dev/null}"
-  echo "${head}"
-}
-
-# check_protected_paths — Fail if agent touched protected files.
-# Usage: check_protected_paths "$PR_CHECKOUT_PATH" "$PRE_AGENT_HEAD"
-check_protected_paths() {
-  local repo_path="$1"
-  local base_sha="$2"
-  local blocked=0
-
-  local protected=(".github/" ".claude/" ".fullsend/" "agents/" "harness/"
-                    "plugins/" "policies/" "api-servers/" "CODEOWNERS"
-                    ".pre-commit-config.yaml" ".gitattributes")
-
-  local changed_files
-  changed_files=$(git -C "${repo_path}" diff --name-only "${base_sha}..HEAD" 2>/dev/null || true)
-  if [[ -z "${changed_files}" ]]; then
-    return 0
-  fi
-
-  for pattern in "${protected[@]}"; do
-    if printf '%s\n' "${changed_files}" | grep -qE "^${pattern}"; then
-      echo "::error::Agent modified protected path: ${pattern}"
-      blocked=$((blocked + 1))
-    fi
-  done
-
-  if [[ "${blocked}" -gt 0 ]]; then
-    echo "::error::${blocked} protected path(s) modified — aborting push"
-    return 1
-  fi
-}
-
-# scan_agent_commits — Run gitleaks on agent commits only (git-aware mode).
-# Usage: scan_agent_commits "$PR_CHECKOUT_PATH" "$PRE_AGENT_HEAD"
-scan_agent_commits() {
-  local repo_path="$1"
-  local base_sha="$2"
-
-  if ! command -v gitleaks >/dev/null 2>&1; then
-    echo "::warning::gitleaks not installed — skipping commit scan"
-    return 0
-  fi
-
-  echo "Running gitleaks on agent commits (${base_sha}..HEAD)..."
-  if gitleaks detect --source="${repo_path}" --log-opts="${base_sha}..HEAD" 2>&1; then
-    echo "OK: no secrets in agent commits"
-  else
-    echo "::error::gitleaks detected secrets in agent commits — aborting push"
-    return 1
   fi
 }
 

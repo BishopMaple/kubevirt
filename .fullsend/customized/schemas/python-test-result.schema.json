@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "python-test-result.schema.json",
+  "title": "Python Test Generator Result",
+  "description": "Structured output from the QualityFlow Python test generator agent. Validated by the harness before the post-script runs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "jira_id"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "jira_id": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]+-\\d+$"
+    },
+    "test_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Paths to generated Python test files"
+    },
+    "collection_verified": {
+      "type": "boolean",
+      "description": "Whether the generated tests passed pytest collection"
+    },
+    "conftest": {
+      "type": "string",
+      "description": "Path to generated conftest.py"
+    },
+    "lsp_patterns": {
+      "type": "string",
+      "description": "Path to extracted LSP patterns YAML"
+    },
+    "test_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of test functions generated"
+    },
+    "reason": {
+      "type": "string",
+      "enum": ["std-not-found", "config-error", "timeout", "collection-failed", "no-python-scenarios"]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } }, "required": ["status"] },
+      "then": { "required": ["test_files"] }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } }, "required": ["status"] },
+      "then": { "required": ["reason"] }
+    }
+  ]
+}

@@ -3,10 +3,11 @@
 version: "1.0"
 
 routes:
-  - prefix: "CNV"
-    project: "cnv"
   - prefix: "MYPROJ"
     project: "example"
+  # Add more routes for additional projects:
+  # - prefix: "FEAT"
+  #   project: "another-project"
 
 # "example" = use example project for unknown prefixes
 # null = error on unknown prefix (fail-fast)

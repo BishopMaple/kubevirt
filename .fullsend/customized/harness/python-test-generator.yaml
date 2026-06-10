@@ -1,0 +1,44 @@
+# harness/python-test-generator.yaml — Generate working Python/pytest tier 2 tests.
+#
+# Needs GitHub (gh CLI) for repo file fetches and Python registries for imports.
+agent: agents/python-test-generator.md
+description: "Generate working Python/pytest tier 2 tests from STD specifications"
+model: opus
+image: images/qf-code
+policy: policies/qf-codegen.yaml
+agent_input: config
+
+pre_script: scripts/pre-python-test-generator.sh
+
+host_files:
+  - src: env/gcp-vertex.env
+    dest: /tmp/workspace/.env.d/gcp-vertex.env
+    expand: true
+  - src: env/qf-credentials.env
+    dest: /tmp/workspace/.env.d/qf-credentials.env
+    expand: true
+  - src: ${GOOGLE_APPLICATION_CREDENTIALS}
+    dest: /tmp/workspace/.gcp-credentials.json
+  - src: ${SOURCE_REPO_PATH}
+    dest: /tmp/workspace/source-repo
+skills:
+  - skills/project-resolver
+  - skills/python-test-generator
+  - skills/pipeline-state
+  - skills/lsp-tracer
+  - skills/feature-finder
+
+validation_loop:
+  script: scripts/validate-python-tests.sh
+  max_iterations: 2
+
+post_script: scripts/post-python-test-generator.sh
+
+plugins:
+  - plugins/gopls-lsp
+
+runner_env:
+  JIRA_TICKET: "${JIRA_TICKET}"
+  FULLSEND_OUTPUT_SCHEMA: ${FULLSEND_DIR}/schemas/python-test-result.schema.json
+
+timeout_minutes: 20
