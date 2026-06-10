@@ -25,6 +25,7 @@ host_files:
     optional: true
   - src: ${SOURCE_REPO_PATH}
     dest: /tmp/workspace/source-repo
+    optional: true
 
 skills:
   - skills/project-resolver
