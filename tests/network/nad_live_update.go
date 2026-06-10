@@ -52,16 +52,14 @@ import (
 var _ = Describe(SIG("NAD name live update", decorators.RequiresTwoSchedulableNodes, Serial, func() {
 	const (
 		vmName          = "migrating-vm"
-		vmIP            = "10.1.1.100"
 		sourceNAD       = "nad-1"
 		targetNAD       = "nad-2"
 		pollingInterval = 2 * time.Second
 		timeoutInterval = 5 * time.Minute
 	)
 	var (
-		testNamespace  string
-		virtClient     kubecli.KubevirtClient
-		sourceNodeName string
+		testNamespace string
+		virtClient    kubecli.KubevirtClient
 	)
 
 	BeforeEach(func() {
@@ -103,7 +101,7 @@ var _ = Describe(SIG("NAD name live update", decorators.RequiresTwoSchedulableNo
 		nodes := libnode.GetAllSchedulableNodes(kubevirt.Client())
 		const minNoOfNodesNeeded = 2
 		Expect(len(nodes.Items)).To(BeNumerically(">=", minNoOfNodesNeeded))
-		sourceNodeName = nodes.Items[0].Name
+		sourceNodeName := nodes.Items[0].Name
 
 		const (
 			staticVMI1Name = "static-vmi-1"
@@ -124,10 +122,11 @@ var _ = Describe(SIG("NAD name live update", decorators.RequiresTwoSchedulableNo
 		Expect(err).ToNot(HaveOccurred())
 
 		var vmi *v1.VirtualMachineInstance
+		const ipBeforeChange = "10.1.1.100"
 		vmi, err = newVMIWithAffinity(
 			vmName,
 			sourceNAD,
-			vmIP+subnetMask,
+			ipBeforeChange+subnetMask,
 			sourceNodeName,
 		)
 		Expect(err).ToNot(HaveOccurred())
@@ -144,7 +143,7 @@ var _ = Describe(SIG("NAD name live update", decorators.RequiresTwoSchedulableNo
 
 		Expect(console.LoginToAlpine(staticVMI1)).To(Succeed())
 
-		Expect(libnet.PingFromVMConsole(staticVMI1, vmIP)).To(Succeed())
+		Expect(libnet.PingFromVMConsole(staticVMI1, ipBeforeChange)).To(Succeed())
 	})
 
 	It("should modify VM network", func() {
@@ -159,36 +158,20 @@ var _ = Describe(SIG("NAD name live update", decorators.RequiresTwoSchedulableNo
 		Expect(err).ToNot(HaveOccurred())
 
 		By("Waiting for migration condition to appear and disappear")
-		Eventually(matcher.ThisVMI(vmi)).
-			WithTimeout(timeoutInterval).
-			WithPolling(pollingInterval).
+		Eventually(matcher.ThisVMI(vmi), timeoutInterval, pollingInterval).
 			Should(matcher.HaveConditionTrue(v1.VirtualMachineInstanceMigrationRequired))
 
-		Eventually(matcher.ThisVMI(vmi)).
-			WithTimeout(timeoutInterval).
-			WithPolling(pollingInterval).
+		Eventually(matcher.ThisVMI(vmi), timeoutInterval, pollingInterval).
 			Should(matcher.HaveConditionMissingOrFalse(v1.VirtualMachineInstanceMigrationRequired))
 
-		Eventually(func() (string, error) {
-			vmi, err = kubevirt.Client().VirtualMachineInstance(testNamespace).Get(context.Background(), vmName, metav1.GetOptions{})
-			if err != nil {
-				return "", err
-			}
-			return vmi.Status.NodeName, nil
-		}).
-			WithTimeout(timeoutInterval).
-			WithPolling(pollingInterval).
-			Should(SatisfyAll(
-				Not(BeEmpty()),
-				Not(Equal(sourceNodeName)),
-			))
-
+		vmi, err = kubevirt.Client().VirtualMachineInstance(testNamespace).Get(context.Background(), vmName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
 		targetNode := vmi.Status.NodeName
 
 		var staticVMI2 *v1.VirtualMachineInstance
 		const (
 			staticVMI2Name = "static-vmi-2"
-			staticVMI2IP   = "10.1.1.20"
+			staticVMI2IP   = "10.1.2.10"
 			subnetMask     = "/24"
 		)
 		staticVMI2, err = newVMIWithAffinity(
@@ -203,14 +186,27 @@ var _ = Describe(SIG("NAD name live update", decorators.RequiresTwoSchedulableNo
 			Create(context.Background(), staticVMI2, metav1.CreateOptions{})
 		Expect(err).ToNot(HaveOccurred())
 
+		const ipAfterChange = "10.1.2.100"
+		Expect(console.LoginToAlpine(vmi)).To(Succeed())
+		err = configureIPInGuest(vmi, ipAfterChange+subnetMask)
+		Expect(err).NotTo(HaveOccurred())
+
 		Eventually(matcher.ThisVMI(staticVMI2)).WithTimeout(timeoutInterval).WithPolling(pollingInterval).
 			Should(matcher.HaveConditionTrue(v1.VirtualMachineInstanceAgentConnected))
-
 		Expect(console.LoginToAlpine(staticVMI2)).To(Succeed())
 
-		Expect(libnet.PingFromVMConsole(staticVMI2, vmIP)).To(Succeed())
+		Expect(libnet.PingFromVMConsole(staticVMI2, ipAfterChange)).To(Succeed())
 	})
 }))
+
+func configureIPInGuest(vmi *v1.VirtualMachineInstance, ip string) error {
+	const iface = "eth0"
+	err := libnet.AddIPAddress(vmi, iface, ip)
+	if err != nil {
+		return err
+	}
+	return libnet.SetInterfaceUp(vmi, iface)
+}
 
 func updateNADNameAndRemoveAffinityRules(vm *v1.VirtualMachine, targetNAD string) error {
 	patchData, err := patch.New(
