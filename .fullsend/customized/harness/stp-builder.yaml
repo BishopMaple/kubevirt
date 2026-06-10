@@ -12,15 +12,15 @@ pre_script: scripts/pre-stp-builder.sh
 
 host_files:
   - src: env/gcp-vertex.env
-    dest: /tmp/workspace/.env.d/gcp-vertex.env
+    dest: /sandbox/workspace/.env.d/gcp-vertex.env
     expand: true
   - src: env/qf-credentials.env
-    dest: /tmp/workspace/.env.d/qf-credentials.env
+    dest: /sandbox/workspace/.env.d/qf-credentials.env
     expand: true
   - src: ${GOOGLE_APPLICATION_CREDENTIALS}
-    dest: /tmp/workspace/.gcp-credentials.json
+    dest: /tmp/.gcp-credentials.json
   - src: env/mcp.json
-    dest: /tmp/workspace/target-repo/.mcp.json
+    dest: /sandbox/workspace/pr-repo/.mcp.json
     expand: true
     optional: true
 

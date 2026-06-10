@@ -12,13 +12,13 @@ pre_script: scripts/pre-std-reviewer.sh
 
 host_files:
   - src: env/gcp-vertex.env
-    dest: /tmp/workspace/.env.d/gcp-vertex.env
+    dest: /sandbox/workspace/.env.d/gcp-vertex.env
     expand: true
   - src: env/qf-credentials.env
-    dest: /tmp/workspace/.env.d/qf-credentials.env
+    dest: /sandbox/workspace/.env.d/qf-credentials.env
     expand: true
   - src: ${GOOGLE_APPLICATION_CREDENTIALS}
-    dest: /tmp/workspace/.gcp-credentials.json
+    dest: /tmp/.gcp-credentials.json
 
 skills:
   - skills/project-resolver
