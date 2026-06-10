@@ -191,3 +191,4 @@ jobs:
         with:
           agent: qualityflow
           version: latest
+          target-repo: ${{ github.workspace }}/pr-repo
