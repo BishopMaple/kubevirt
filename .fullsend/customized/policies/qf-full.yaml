@@ -73,3 +73,15 @@ network_policies:
     binaries:
       - path: "**/gh"
       - path: "**/curl"
+
+  github_oidc:
+    name: github-oidc
+    endpoints:
+      - host: "*.actions.githubusercontent.com"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+    binaries:
+      - path: "**/claude"
+      - path: "**/node"
