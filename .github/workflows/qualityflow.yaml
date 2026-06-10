@@ -231,6 +231,8 @@ jobs:
           PR_CHECKOUT_PATH: ${{ github.workspace }}/pr-repo
           SOURCE_REPO_PATH: ${{ github.workspace }}/pr-repo
           GCP_OIDC_TOKEN_FILE: ""
+          FULLSEND_GCP_OIDC_URL: ""
+          FULLSEND_GCP_OIDC_AUTH_FILE: ""
         with:
           agent: stp-builder
           version: latest
@@ -274,6 +276,8 @@ jobs:
           PR_CHECKOUT_PATH: ${{ github.workspace }}/pr-repo
           SOURCE_REPO_PATH: ${{ github.workspace }}/pr-repo
           GCP_OIDC_TOKEN_FILE: ""
+          FULLSEND_GCP_OIDC_URL: ""
+          FULLSEND_GCP_OIDC_AUTH_FILE: ""
         with:
           agent: std-builder
           version: latest
@@ -326,6 +330,8 @@ jobs:
           PR_CHECKOUT_PATH: ${{ github.workspace }}/pr-repo
           SOURCE_REPO_PATH: ${{ github.workspace }}/pr-repo
           GCP_OIDC_TOKEN_FILE: ""
+          FULLSEND_GCP_OIDC_URL: ""
+          FULLSEND_GCP_OIDC_AUTH_FILE: ""
         with:
           agent: go-test-generator
           version: latest
