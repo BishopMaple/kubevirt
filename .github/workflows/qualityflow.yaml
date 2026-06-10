@@ -177,53 +177,43 @@ jobs:
           QF_JIRA_USER_EMAIL: ${{ secrets.JIRA_EMAIL }}
         run: bash .github/scripts/setup-agent-env.sh
 
-      - name: Start OIDC token refresher
+      - name: Patch GCP credentials for URL-based OIDC refresh
         run: |
           set -euo pipefail
-          cat > /tmp/refresh-oidc-token.sh << 'EOF'
+          cat > /tmp/patch-gcp-creds.sh << 'PATCH_EOF'
           #!/bin/bash
-          LOG() { echo "[$(date -u '+%H:%M:%S')] $*"; }
-          LOG "Refresher started, PID=$$"
-          LOG "OIDC_URL=${FULLSEND_GCP_OIDC_URL:+set (${#FULLSEND_GCP_OIDC_URL} chars)}"
-          LOG "AUTH_FILE=${FULLSEND_GCP_OIDC_AUTH_FILE:-unset}"
-          LOG "TOKEN_FILE=${GCP_OIDC_TOKEN_FILE:-unset}"
-          CYCLE=0
-          while true; do
-            sleep 120
-            CYCLE=$((CYCLE + 1))
-            LOG "--- Cycle ${CYCLE} ---"
-            if [[ -z "${FULLSEND_GCP_OIDC_URL:-}" || -z "${FULLSEND_GCP_OIDC_AUTH_FILE:-}" ]]; then
-              LOG "SKIP: env vars not set"
-              continue
-            fi
-            AUTH=$(cat "${FULLSEND_GCP_OIDC_AUTH_FILE}" 2>/dev/null || true)
-            if [[ -z "${AUTH}" ]]; then LOG "SKIP: AUTH file empty"; continue; fi
-            FRESH=$(curl -sSf -H "Authorization: ${AUTH}" "${FULLSEND_GCP_OIDC_URL}" 2>&1) || true
-            if [[ -z "${FRESH}" ]]; then LOG "SKIP: curl returned empty"; continue; fi
-            if echo "${FRESH}" | grep -qi "error\|bad\|unauthorized"; then
-              LOG "WARN: curl response looks like error: ${FRESH:0:200}"
-              continue
-            fi
-            echo "${FRESH}" > "${GCP_OIDC_TOKEN_FILE}"
-            LOG "OK: wrote ${#FRESH} chars to ${GCP_OIDC_TOKEN_FILE}"
-            CONTAINERS=$(podman ps -q 2>/dev/null || true)
-            if [[ -z "${CONTAINERS}" ]]; then
-              LOG "INFO: no running containers"
-              continue
-            fi
-            for cid in ${CONTAINERS}; do
-              if cat "${GCP_OIDC_TOKEN_FILE}" | podman exec -i "${cid}" sh -c 'cat > /sandbox/workspace/.gcp-oidc-token' 2>&1; then
-                LOG "OK: pushed token to container ${cid:0:12}"
-              else
-                LOG "FAIL: podman exec failed for ${cid:0:12}: $(cat "${GCP_OIDC_TOKEN_FILE}" | podman exec -i "${cid}" sh -c 'cat > /sandbox/workspace/.gcp-oidc-token' 2>&1 || true)"
-              fi
-            done
-          done
-          EOF
-          chmod +x /tmp/refresh-oidc-token.sh
-          nohup /tmp/refresh-oidc-token.sh > /tmp/oidc-refresh.log 2>&1 &
-          echo "REFRESHER_PID=$!" >> "${GITHUB_ENV}"
-          echo "::notice::Started OIDC token refresher (PID $!)"
+          set -euo pipefail
+          CRED_FILE="${GOOGLE_APPLICATION_CREDENTIALS}"
+          if [[ ! -f "${CRED_FILE}" ]]; then
+            echo "::warning::No credential file at ${CRED_FILE}, skipping patch"
+            exit 0
+          fi
+          OIDC_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=$(python3 -c "
+          import json, urllib.parse
+          with open('${CRED_FILE}') as f:
+              c = json.load(f)
+          print(urllib.parse.quote(c.get('audience', ''), safe=''))
+          ")"
+          OIDC_TOKEN="${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"
+          python3 -c "
+          import json, sys
+          cred_file = sys.argv[1]
+          oidc_url = sys.argv[2]
+          oidc_token = sys.argv[3]
+          with open(cred_file) as f:
+              cred = json.load(f)
+          cred['credential_source'] = {
+              'url': oidc_url,
+              'headers': {'Authorization': 'bearer ' + oidc_token},
+              'format': {'type': 'text'}
+          }
+          with open(cred_file, 'w') as f:
+              json.dump(cred, f, indent=2)
+          " "${CRED_FILE}" "${OIDC_URL}" "${OIDC_TOKEN}"
+          echo "::notice::Patched ${CRED_FILE} to use URL-based OIDC source"
+          PATCH_EOF
+          chmod +x /tmp/patch-gcp-creds.sh
+          bash /tmp/patch-gcp-creds.sh
 
       # --- QualityFlow pipeline: each agent runs in its own sandbox ---
 
@@ -265,6 +255,9 @@ jobs:
         with:
           gcp_wif_provider: ${{ secrets.FULLSEND_GCP_WIF_PROVIDER }}
           gcp_project_id: ${{ secrets.FULLSEND_GCP_PROJECT_ID }}
+
+      - name: Patch GCP credentials (Stage 2)
+        run: bash /tmp/patch-gcp-creds.sh
 
       - name: "QF Stage 2: STD Builder"
         uses: ./.defaults/
@@ -314,6 +307,9 @@ jobs:
           gcp_wif_provider: ${{ secrets.FULLSEND_GCP_WIF_PROVIDER }}
           gcp_project_id: ${{ secrets.FULLSEND_GCP_PROJECT_ID }}
 
+      - name: Patch GCP credentials (Stage 3)
+        run: bash /tmp/patch-gcp-creds.sh
+
       - name: "QF Stage 3: Go Test Generator"
         uses: ./.defaults/
         env:
@@ -331,11 +327,3 @@ jobs:
           agent: go-test-generator
           version: latest
           target-repo: ${{ github.workspace }}/pr-repo
-
-      - name: Dump OIDC refresher log
-        if: always()
-        run: |
-          echo "=== OIDC Refresher Log ==="
-          cat /tmp/oidc-refresh.log 2>/dev/null || echo "No refresher log found"
-          echo "=== Refresher PID status ==="
-          ps -p "${REFRESHER_PID:-0}" 2>/dev/null || echo "Refresher process not running"
