@@ -205,7 +205,7 @@ jobs:
           cred['credential_source'] = {
               'url': oidc_url,
               'headers': {'Authorization': 'bearer ' + oidc_token},
-              'format': {'type': 'text'}
+              'format': {'type': 'json', 'subject_token_field_name': 'value'}
           }
           with open(cred_file, 'w') as f:
               json.dump(cred, f, indent=2)
