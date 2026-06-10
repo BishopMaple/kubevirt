@@ -11,6 +11,14 @@ agent_input: config
 pre_script: scripts/pre-python-test-generator.sh
 
 host_files:
+  - src: env/gcp-vertex.env
+    dest: /sandbox/workspace/.env.d/gcp-vertex.env
+    expand: true
+  - src: ${GOOGLE_APPLICATION_CREDENTIALS}
+    dest: /tmp/.gcp-credentials.json
+  - src: ${GCP_OIDC_TOKEN_FILE}
+    dest: /sandbox/workspace/.gcp-oidc-token
+    optional: true
   - src: env/qf-credentials.env
     dest: /sandbox/workspace/.env.d/qf-credentials.env
     expand: true
@@ -33,8 +41,5 @@ plugins:
 runner_env:
   JIRA_TICKET: "${JIRA_TICKET}"
   FULLSEND_OUTPUT_SCHEMA: ${FULLSEND_DIR}/schemas/python-test-result.schema.json
-  CLAUDE_CODE_USE_VERTEX: "1"
-  ANTHROPIC_VERTEX_PROJECT_ID: "${ANTHROPIC_VERTEX_PROJECT_ID}"
-  CLOUD_ML_REGION: "${CLOUD_ML_REGION}"
 
 timeout_minutes: 20
