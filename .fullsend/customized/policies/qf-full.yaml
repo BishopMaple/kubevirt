@@ -24,7 +24,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
     binaries:
       - path: "**/curl"
       - path: "**/claude"
@@ -37,7 +37,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
     binaries:
       - path: "**/curl"
 
@@ -48,7 +48,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
     binaries:
       - path: "**/npm"
       - path: "**/node"
@@ -60,12 +60,12 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
       - host: "github.com"
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
     binaries:
       - path: "**/gh"
       - path: "**/curl"

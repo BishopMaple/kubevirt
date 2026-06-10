@@ -21,7 +21,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
     binaries:
       - path: "**/claude"
       - path: "**/node"

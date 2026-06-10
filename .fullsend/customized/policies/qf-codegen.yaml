@@ -21,7 +21,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
     binaries:
       - path: "**/claude"
       - path: "**/node"
@@ -33,12 +33,12 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
       - host: "github.com"
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
     binaries:
       - path: "**/gh"
       - path: "**/git"
@@ -50,7 +50,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
     binaries:
       - path: "**/npm"
       - path: "**/node"
@@ -62,17 +62,17 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
       - host: "sum.golang.org"
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
       - host: "storage.googleapis.com"
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
     binaries:
       - path: "**/go"
 
@@ -83,12 +83,12 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
       - host: "files.pythonhosted.org"
         port: 443
         protocol: rest
         enforcement: enforce
-        access: allow
+        access: read-write
     binaries:
       - path: "**/pip"
       - path: "**/pip3"
