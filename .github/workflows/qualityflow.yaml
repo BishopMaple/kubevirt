@@ -85,7 +85,7 @@ jobs:
         id: app-token
         uses: ./.defaults/.github/actions/mint-token
         with:
-          role: qualityflow
+          role: coder
           repos: ${{ steps.repo-parts.outputs.name }}
           mint_url: ${{ vars.FULLSEND_MINT_URL }}
 
