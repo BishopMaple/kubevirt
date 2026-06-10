@@ -19,9 +19,6 @@ host_files:
     expand: true
   - src: ${GOOGLE_APPLICATION_CREDENTIALS}
     dest: /tmp/workspace/.gcp-credentials.json
-  - src: ${SOURCE_REPO_PATH}
-    dest: /tmp/workspace/source-repo
-    optional: true
 skills:
   - skills/project-resolver
   - skills/go-test-generator

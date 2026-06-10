@@ -23,9 +23,6 @@ host_files:
     dest: /tmp/workspace/target-repo/.mcp.json
     expand: true
     optional: true
-  - src: ${SOURCE_REPO_PATH}
-    dest: /tmp/workspace/source-repo
-    optional: true
 
 skills:
   - skills/project-resolver
