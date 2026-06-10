@@ -4,7 +4,7 @@
 agent: agents/stp-reviewer.md
 description: "Review an STP against QE standards using zero-trust verification"
 model: opus
-image: images/qf-code
+image: ghcr.io/fullsend-ai/fullsend-code:latest
 policy: policies/qf-full.yaml
 agent_input: config
 

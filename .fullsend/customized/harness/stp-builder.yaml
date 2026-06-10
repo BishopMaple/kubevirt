@@ -4,7 +4,7 @@
 agent: agents/stp-builder.md
 description: "Generate an STP from Jira ticket data, PR diffs, and LSP analysis"
 model: opus
-image: images/qf-code
+image: ghcr.io/fullsend-ai/fullsend-code:latest
 policy: policies/qf-full.yaml
 agent_input: config
 

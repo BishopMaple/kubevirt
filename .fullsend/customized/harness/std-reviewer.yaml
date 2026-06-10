@@ -4,7 +4,7 @@
 agent: agents/std-reviewer.md
 description: "Review an STD against QE standards and STP traceability"
 model: opus
-image: images/qf-code
+image: ghcr.io/fullsend-ai/fullsend-code:latest
 policy: policies/qf-vertex.yaml
 agent_input: config
 

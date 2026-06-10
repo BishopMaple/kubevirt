@@ -191,6 +191,7 @@ jobs:
           PUSH_TOKEN: ${{ steps.app-token.outputs.token }}
           PRE_AGENT_HEAD: ${{ steps.pre-head.outputs.sha }}
           PR_CHECKOUT_PATH: ${{ github.workspace }}/pr-repo
+          SOURCE_REPO_PATH: ${{ github.workspace }}/pr-repo
         with:
           agent: stp-builder
           version: latest
@@ -208,6 +209,7 @@ jobs:
           PUSH_TOKEN: ${{ steps.app-token.outputs.token }}
           PRE_AGENT_HEAD: ${{ steps.pre-head.outputs.sha }}
           PR_CHECKOUT_PATH: ${{ github.workspace }}/pr-repo
+          SOURCE_REPO_PATH: ${{ github.workspace }}/pr-repo
         with:
           agent: std-builder
           version: latest
@@ -225,6 +227,7 @@ jobs:
           PUSH_TOKEN: ${{ steps.app-token.outputs.token }}
           PRE_AGENT_HEAD: ${{ steps.pre-head.outputs.sha }}
           PR_CHECKOUT_PATH: ${{ github.workspace }}/pr-repo
+          SOURCE_REPO_PATH: ${{ github.workspace }}/pr-repo
         with:
           agent: go-test-generator
           version: latest

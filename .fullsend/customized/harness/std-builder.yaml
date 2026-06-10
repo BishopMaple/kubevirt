@@ -4,7 +4,7 @@
 agent: agents/std-builder.md
 description: "Generate STD YAML and test stubs from an approved STP"
 model: opus
-image: images/qf-code
+image: ghcr.io/fullsend-ai/fullsend-code:latest
 policy: policies/qf-vertex.yaml
 agent_input: config
 

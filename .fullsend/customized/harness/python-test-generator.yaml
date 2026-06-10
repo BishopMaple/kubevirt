@@ -4,7 +4,7 @@
 agent: agents/python-test-generator.md
 description: "Generate working Python/pytest tier 2 tests from STD specifications"
 model: opus
-image: images/qf-code
+image: ghcr.io/fullsend-ai/fullsend-code:latest
 policy: policies/qf-codegen.yaml
 agent_input: config
 

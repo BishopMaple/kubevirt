@@ -4,7 +4,7 @@
 agent: agents/stp-refiner.md
 description: "Review-refine loop that iterates until the STP reaches APPROVED verdict"
 model: opus
-image: images/qf-code
+image: ghcr.io/fullsend-ai/fullsend-code:latest
 policy: policies/qf-full.yaml
 agent_input: config
 

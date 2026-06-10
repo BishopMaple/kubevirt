@@ -4,7 +4,7 @@
 agent: agents/std-refiner.md
 description: "Review-refine loop that iterates until the STD reaches APPROVED verdict"
 model: opus
-image: images/qf-code
+image: ghcr.io/fullsend-ai/fullsend-code:latest
 policy: policies/qf-vertex.yaml
 agent_input: config
 
