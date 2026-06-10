@@ -33,5 +33,8 @@ post_script: scripts/post-std-builder.sh
 runner_env:
   JIRA_TICKET: "${JIRA_TICKET}"
   FULLSEND_OUTPUT_SCHEMA: ${FULLSEND_DIR}/schemas/std-builder-result.schema.json
+  CLAUDE_CODE_USE_VERTEX: "1"
+  ANTHROPIC_VERTEX_PROJECT_ID: "${ANTHROPIC_VERTEX_PROJECT_ID}"
+  CLOUD_ML_REGION: "${CLOUD_ML_REGION}"
 
 timeout_minutes: 15
