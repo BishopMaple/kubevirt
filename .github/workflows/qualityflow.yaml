@@ -197,6 +197,21 @@ jobs:
           version: latest
           target-repo: ${{ github.workspace }}/pr-repo
 
+      - name: Stage handoff — copy STP output into PR repo
+        env:
+          JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
+        run: |
+          set -euo pipefail
+          STP_FILE=$(find "${GITHUB_WORKSPACE}/output" -name "${JIRA_TICKET}_test_plan.md" -type f | head -1)
+          if [[ -z "${STP_FILE}" ]]; then
+            echo "::error::STP output not found after Stage 1"
+            exit 1
+          fi
+          DEST="${GITHUB_WORKSPACE}/pr-repo/outputs/stp/${JIRA_TICKET}"
+          mkdir -p "${DEST}"
+          cp "${STP_FILE}" "${DEST}/"
+          echo "::notice::Copied STP to ${DEST}/${JIRA_TICKET}_test_plan.md"
+
       - name: Refresh GCP credentials (Stage 2)
         uses: ./.defaults/.github/actions/setup-gcp
         with:
@@ -220,6 +235,30 @@ jobs:
           agent: std-builder
           version: latest
           target-repo: ${{ github.workspace }}/pr-repo
+
+      - name: Stage handoff — copy STD output into PR repo
+        env:
+          JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
+        run: |
+          set -euo pipefail
+          STD_FILE=$(find "${GITHUB_WORKSPACE}/output" -name "${JIRA_TICKET}_test_description.yaml" -type f | head -1)
+          if [[ -n "${STD_FILE}" ]]; then
+            DEST="${GITHUB_WORKSPACE}/pr-repo/outputs/std/${JIRA_TICKET}"
+            mkdir -p "${DEST}"
+            cp "${STD_FILE}" "${DEST}/"
+            echo "::notice::Copied STD to ${DEST}/"
+          fi
+          # Also copy any stub files
+          for stub in $(find "${GITHUB_WORKSPACE}/output" -name "*_stubs_test.go" -o -name "test_*_stubs.py" 2>/dev/null); do
+            STUB_NAME=$(basename "${stub}")
+            if [[ "${stub}" == *_test.go ]]; then
+              mkdir -p "${DEST}/go-tests"
+              cp "${stub}" "${DEST}/go-tests/"
+            else
+              mkdir -p "${DEST}/python-tests"
+              cp "${stub}" "${DEST}/python-tests/"
+            fi
+          done
 
       - name: Refresh GCP credentials (Stage 3)
         uses: ./.defaults/.github/actions/setup-gcp
