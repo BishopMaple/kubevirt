@@ -183,7 +183,7 @@ jobs:
           cat > /tmp/refresh-oidc-token.sh << 'EOF'
           #!/bin/bash
           while true; do
-            sleep 180
+            sleep 120
             if [[ -z "${FULLSEND_GCP_OIDC_URL:-}" || -z "${FULLSEND_GCP_OIDC_AUTH_FILE:-}" ]]; then
               continue
             fi
@@ -193,9 +193,7 @@ jobs:
             if [[ -z "${FRESH}" ]]; then continue; fi
             echo "${FRESH}" > "${GCP_OIDC_TOKEN_FILE}"
             for cid in $(podman ps -q 2>/dev/null); do
-              podman cp "${GCP_OIDC_TOKEN_FILE}" "${cid}:/sandbox/workspace/.gcp-oidc-token" 2>/dev/null || true
-              podman exec "${cid}" chmod 644 /sandbox/workspace/.gcp-oidc-token 2>/dev/null || true
-              podman exec "${cid}" chown sandbox:sandbox /sandbox/workspace/.gcp-oidc-token 2>/dev/null || true
+              cat "${GCP_OIDC_TOKEN_FILE}" | podman exec -i "${cid}" sh -c 'cat > /sandbox/workspace/.gcp-oidc-token' 2>/dev/null || true
             done
           done
           EOF
