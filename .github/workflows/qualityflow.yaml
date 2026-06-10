@@ -194,6 +194,8 @@ jobs:
             echo "${FRESH}" > "${GCP_OIDC_TOKEN_FILE}"
             for cid in $(podman ps -q 2>/dev/null); do
               podman cp "${GCP_OIDC_TOKEN_FILE}" "${cid}:/sandbox/workspace/.gcp-oidc-token" 2>/dev/null || true
+              podman exec "${cid}" chmod 644 /sandbox/workspace/.gcp-oidc-token 2>/dev/null || true
+              podman exec "${cid}" chown sandbox:sandbox /sandbox/workspace/.gcp-oidc-token 2>/dev/null || true
             done
           done
           EOF

@@ -1,0 +1,70 @@
+primary_repo:
+  name: "kubevirt"
+  org: "kubevirt"
+  full_name: "kubevirt/kubevirt"
+  url: "https://github.com/kubevirt/kubevirt"
+  local_path_env: "KUBEVIRT_REPO_PATH"
+  default_branch: "main"
+  language: "go"
+  build_system: "bazel"
+  build_command: "bazel test //tests/{package}:go_default_test"
+
+tier2_repo:
+  name: "openshift-virtualization-tests"
+  org: "RedHatQE"
+  full_name: "RedHatQE/openshift-virtualization-tests"
+  url: "https://github.com/RedHatQE/openshift-virtualization-tests"
+  local_path_env: "TIER2_REPO_PATH"
+  default_branch: "main"
+  language: "python"
+
+additional_repos:
+  - name: "containerized-data-importer"
+    org: "kubevirt"
+    full_name: "kubevirt/containerized-data-importer"
+
+design_docs_repo:
+  name: "openshift-virtualization-tests-design-docs"
+  org: "BishopMaple"
+  full_name: "BishopMaple/openshift-virtualization-tests-design-docs"
+  url: "https://github.com/BishopMaple/openshift-virtualization-tests-design-docs"
+  default_branch: "main"
+
+# Files auto-fetched from repos at pipeline runtime (project-resolver Step 9)
+# Each entry maps a logical name to a repo reference and file path.
+# project-resolver fetches via mcp__github__get_file_contents and attaches
+# to project_context.repo_rules.{name}
+# If fetch fails, falls back to local copy in config/projects/cnv/
+repo_files:
+  agents_rules:
+    repo: "tier2_repo"
+    path: "AGENTS.md"
+    fallback: null  # no local fallback — repo is the source of truth
+    description: "Coding standards, test design workflow, fixture guidelines"
+
+  std_format:
+    repo: "tier2_repo"
+    path: "docs/SOFTWARE_TEST_DESCRIPTION.md"
+    fallback: null
+    description: "STD docstring format (PSE), examples, and checklist"
+
+  stp_template:
+    repo: "design_docs_repo"
+    path: "stps/stp-template/stp.md"
+    fallback: "templates/stp/stp-template.md"  # relative to config_dir
+    description: "Official STP template structure"
+
+  stp_guide:
+    repo: "design_docs_repo"
+    path: "docs/stp-guide.md"
+    fallback: null
+    description: "STP lifecycle, structure guide, best practices"
+
+  testing_tiers:
+    repo: "design_docs_repo"
+    path: "docs/testing-tiers.md"
+    fallback: null
+    description: "Tier definitions (Unit, Tier 1, Tier 2) and test pyramid"
+
+pr_url_patterns:
+  - "https://github.com/{org}/{repo}/pull/{number}"
