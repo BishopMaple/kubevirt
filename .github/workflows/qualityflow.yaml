@@ -1,0 +1,193 @@
+# Standalone QualityFlow workflow — generates e2e tests for a PR.
+# Triggered by commenting /qf on a PR (optionally with Jira ticket: /qf CNV-12345).
+# Uses FullSend infrastructure (WIF auth, sandboxed agent execution).
+#
+# Independent of FullSend's dispatch routing — runs as its own workflow.
+name: qualityflow
+
+permissions:
+  actions: write
+  id-token: write
+  contents: write
+  issues: write
+  packages: read
+  pull-requests: write
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  qualityflow:
+    name: QualityFlow
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.issue.pull_request
+      && github.event.comment.user.type != 'Bot'
+      && startsWith(github.event.comment.body, '/qf')
+      && (
+        github.event.comment.author_association == 'OWNER'
+        || github.event.comment.author_association == 'MEMBER'
+        || github.event.comment.author_association == 'COLLABORATOR'
+        || github.event.comment.author_association == 'CONTRIBUTOR'
+      )
+
+    steps:
+      - name: Checkout config repository
+        uses: actions/checkout@v6
+
+      - name: Checkout upstream defaults
+        uses: actions/checkout@v6
+        with:
+          repository: fullsend-ai/fullsend
+          ref: v0
+          path: .defaults
+          fetch-depth: 1
+          sparse-checkout: |
+            .github/actions/
+            .github/scripts/
+            internal/scaffold/fullsend-repo/
+            action.yml
+
+      - name: Prepare workspace (upstream defaults + repo overrides)
+        run: |
+          set -euo pipefail
+          SRC=".defaults/internal/scaffold/fullsend-repo"
+          LAYERED_DIRS="agents skills schemas harness plugins policies scripts env docs"
+          for dir in ${LAYERED_DIRS}; do
+            if [[ -d "${SRC}/${dir}" ]]; then
+              mkdir -p "${dir}"
+              cp -r "${SRC}/${dir}/." "${dir}/"
+            fi
+          done
+          CUSTOM_BASE=".fullsend/customized"
+          for dir in ${LAYERED_DIRS} config; do
+            if [[ -d "${CUSTOM_BASE}/${dir}" ]]; then
+              find "${CUSTOM_BASE}/${dir}" -type f ! -name '.gitkeep' -print0 \
+                | while IFS= read -r -d '' f; do
+                    rel="${f#"${CUSTOM_BASE}"/}"
+                    mkdir -p "$(dirname "${rel}")"
+                    cp "${f}" "${rel}"
+                  done
+            fi
+          done
+          mkdir -p .github/scripts
+          cp "${SRC}/.github/scripts/setup-agent-env.sh" .github/scripts/setup-agent-env.sh 2>/dev/null || true
+
+      - name: Validate enrollment and extract repo metadata
+        id: repo-parts
+        uses: ./.defaults/.github/actions/validate-enrollment
+        with:
+          source_repo: ${{ github.repository }}
+          install_mode: per-repo
+
+      - name: Mint qualityflow token
+        id: app-token
+        uses: ./.defaults/.github/actions/mint-token
+        with:
+          role: qualityflow
+          repos: ${{ steps.repo-parts.outputs.name }}
+          mint_url: ${{ vars.FULLSEND_MINT_URL }}
+
+      - name: Extract PR info
+        id: pr-info
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          HEAD_REF=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" --jq '.head.ref')
+          BASE_REF=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" --jq '.base.ref')
+          echo "pr_number=${PR_NUMBER}" >> "${GITHUB_OUTPUT}"
+          echo "head_ref=${HEAD_REF}" >> "${GITHUB_OUTPUT}"
+          echo "base_ref=${BASE_REF}" >> "${GITHUB_OUTPUT}"
+          echo "::notice::PR #${PR_NUMBER}: ${HEAD_REF} -> ${BASE_REF}"
+
+      - name: Extract Jira ticket
+        id: jira
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          JIRA_TICKET=""
+
+          # Try /qf comment body first (e.g. "/qf CNV-72329").
+          if [[ -n "${COMMENT_BODY}" ]]; then
+            JIRA_TICKET=$(printf '%s\n' "${COMMENT_BODY}" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -1 || true)
+          fi
+
+          # Fallback: PR title.
+          if [[ -z "${JIRA_TICKET}" ]]; then
+            PR_TITLE=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" --jq '.title' 2>/dev/null || true)
+            if [[ -n "${PR_TITLE}" ]]; then
+              JIRA_TICKET=$(printf '%s\n' "${PR_TITLE}" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -1 || true)
+            fi
+          fi
+
+          # Fallback: PR body.
+          if [[ -z "${JIRA_TICKET}" ]]; then
+            PR_BODY=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" --jq '.body' 2>/dev/null || true)
+            if [[ -n "${PR_BODY}" ]]; then
+              JIRA_TICKET=$(printf '%s\n' "${PR_BODY}" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -1 || true)
+            fi
+          fi
+
+          if [[ -z "${JIRA_TICKET}" ]]; then
+            echo "::error::No Jira ticket found in /qf command, PR title, or PR body"
+            exit 1
+          fi
+
+          echo "jira_ticket=${JIRA_TICKET}" >> "${GITHUB_OUTPUT}"
+          echo "::notice::Jira ticket: ${JIRA_TICKET}"
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ steps.pr-info.outputs.head_ref }}
+          path: pr-repo
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Record PRE_AGENT_HEAD
+        id: pre-head
+        run: |
+          PRE_AGENT_HEAD=$(git -C pr-repo rev-parse HEAD)
+          echo "sha=${PRE_AGENT_HEAD}" >> "${GITHUB_OUTPUT}"
+          echo "::notice::PRE_AGENT_HEAD=${PRE_AGENT_HEAD}"
+
+      - name: Setup GCP and prepare credentials
+        uses: ./.defaults/.github/actions/setup-gcp
+        with:
+          gcp_wif_provider: ${{ secrets.FULLSEND_GCP_WIF_PROVIDER }}
+          gcp_project_id: ${{ secrets.FULLSEND_GCP_PROJECT_ID }}
+
+      - name: Setup agent environment
+        env:
+          AGENT_PREFIX: QF_
+          QF_GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          QF_ANTHROPIC_VERTEX_PROJECT_ID: ${{ secrets.FULLSEND_GCP_PROJECT_ID }}
+          QF_CLOUD_ML_REGION: ${{ vars.FULLSEND_GCP_REGION }}
+          QF_JIRA_BASE_URL: ${{ secrets.JIRA_URL }}
+          QF_JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          QF_JIRA_USER_EMAIL: ${{ secrets.JIRA_EMAIL }}
+        run: bash .github/scripts/setup-agent-env.sh
+
+      - name: Run QualityFlow agent
+        uses: ./.defaults/
+        env:
+          PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
+          REPO_FULL_NAME: ${{ github.repository }}
+          TARGET_BRANCH: ${{ steps.pr-info.outputs.head_ref }}
+          TRIGGER_SOURCE: slash-command
+          JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PUSH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PRE_AGENT_HEAD: ${{ steps.pre-head.outputs.sha }}
+          PR_CHECKOUT_PATH: ${{ github.workspace }}/pr-repo
+        with:
+          agent: qualityflow
+          version: latest
