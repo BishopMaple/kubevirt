@@ -33,12 +33,12 @@ require_jira_format() {
 require_config() {
   local config_dir="${QF_CONFIG_DIR:-/tmp/workspace/agent-input}"
   if [[ ! -d "${config_dir}" ]]; then
-    echo "::error::Config directory not found: ${config_dir}"
-    return 1
+    echo "::warning::Config directory not found at ${config_dir} (will be available inside sandbox via agent_input)"
+    return 0
   fi
   if [[ ! -f "${config_dir}/routing.yaml" ]]; then
-    echo "::error::routing.yaml not found in ${config_dir}"
-    return 1
+    echo "::warning::routing.yaml not found in ${config_dir} (will be available inside sandbox via agent_input)"
+    return 0
   fi
   echo "OK: config directory at ${config_dir}"
 }
