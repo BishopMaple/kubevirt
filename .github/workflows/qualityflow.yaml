@@ -182,18 +182,41 @@ jobs:
           set -euo pipefail
           cat > /tmp/refresh-oidc-token.sh << 'EOF'
           #!/bin/bash
+          LOG() { echo "[$(date -u '+%H:%M:%S')] $*"; }
+          LOG "Refresher started, PID=$$"
+          LOG "OIDC_URL=${FULLSEND_GCP_OIDC_URL:+set (${#FULLSEND_GCP_OIDC_URL} chars)}"
+          LOG "AUTH_FILE=${FULLSEND_GCP_OIDC_AUTH_FILE:-unset}"
+          LOG "TOKEN_FILE=${GCP_OIDC_TOKEN_FILE:-unset}"
+          CYCLE=0
           while true; do
             sleep 120
+            CYCLE=$((CYCLE + 1))
+            LOG "--- Cycle ${CYCLE} ---"
             if [[ -z "${FULLSEND_GCP_OIDC_URL:-}" || -z "${FULLSEND_GCP_OIDC_AUTH_FILE:-}" ]]; then
+              LOG "SKIP: env vars not set"
               continue
             fi
             AUTH=$(cat "${FULLSEND_GCP_OIDC_AUTH_FILE}" 2>/dev/null || true)
-            if [[ -z "${AUTH}" ]]; then continue; fi
-            FRESH=$(curl -sSf -H "Authorization: ${AUTH}" "${FULLSEND_GCP_OIDC_URL}" 2>/dev/null || true)
-            if [[ -z "${FRESH}" ]]; then continue; fi
+            if [[ -z "${AUTH}" ]]; then LOG "SKIP: AUTH file empty"; continue; fi
+            FRESH=$(curl -sSf -H "Authorization: ${AUTH}" "${FULLSEND_GCP_OIDC_URL}" 2>&1) || true
+            if [[ -z "${FRESH}" ]]; then LOG "SKIP: curl returned empty"; continue; fi
+            if echo "${FRESH}" | grep -qi "error\|bad\|unauthorized"; then
+              LOG "WARN: curl response looks like error: ${FRESH:0:200}"
+              continue
+            fi
             echo "${FRESH}" > "${GCP_OIDC_TOKEN_FILE}"
-            for cid in $(podman ps -q 2>/dev/null); do
-              cat "${GCP_OIDC_TOKEN_FILE}" | podman exec -i "${cid}" sh -c 'cat > /sandbox/workspace/.gcp-oidc-token' 2>/dev/null || true
+            LOG "OK: wrote ${#FRESH} chars to ${GCP_OIDC_TOKEN_FILE}"
+            CONTAINERS=$(podman ps -q 2>/dev/null || true)
+            if [[ -z "${CONTAINERS}" ]]; then
+              LOG "INFO: no running containers"
+              continue
+            fi
+            for cid in ${CONTAINERS}; do
+              if cat "${GCP_OIDC_TOKEN_FILE}" | podman exec -i "${cid}" sh -c 'cat > /sandbox/workspace/.gcp-oidc-token' 2>&1; then
+                LOG "OK: pushed token to container ${cid:0:12}"
+              else
+                LOG "FAIL: podman exec failed for ${cid:0:12}: $(cat "${GCP_OIDC_TOKEN_FILE}" | podman exec -i "${cid}" sh -c 'cat > /sandbox/workspace/.gcp-oidc-token' 2>&1 || true)"
+              fi
             done
           done
           EOF
@@ -308,3 +331,11 @@ jobs:
           agent: go-test-generator
           version: latest
           target-repo: ${{ github.workspace }}/pr-repo
+
+      - name: Dump OIDC refresher log
+        if: always()
+        run: |
+          echo "=== OIDC Refresher Log ==="
+          cat /tmp/oidc-refresh.log 2>/dev/null || echo "No refresher log found"
+          echo "=== Refresher PID status ==="
+          ps -p "${REFRESHER_PID:-0}" 2>/dev/null || echo "Refresher process not running"
