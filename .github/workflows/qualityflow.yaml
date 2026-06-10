@@ -177,6 +177,31 @@ jobs:
           QF_JIRA_USER_EMAIL: ${{ secrets.JIRA_EMAIL }}
         run: bash .github/scripts/setup-agent-env.sh
 
+      - name: Start OIDC token refresher
+        run: |
+          set -euo pipefail
+          cat > /tmp/refresh-oidc-token.sh << 'EOF'
+          #!/bin/bash
+          while true; do
+            sleep 180
+            if [[ -z "${FULLSEND_GCP_OIDC_URL:-}" || -z "${FULLSEND_GCP_OIDC_AUTH_FILE:-}" ]]; then
+              continue
+            fi
+            AUTH=$(cat "${FULLSEND_GCP_OIDC_AUTH_FILE}" 2>/dev/null || true)
+            if [[ -z "${AUTH}" ]]; then continue; fi
+            FRESH=$(curl -sSf -H "Authorization: ${AUTH}" "${FULLSEND_GCP_OIDC_URL}" 2>/dev/null || true)
+            if [[ -z "${FRESH}" ]]; then continue; fi
+            echo "${FRESH}" > "${GCP_OIDC_TOKEN_FILE}"
+            for cid in $(podman ps -q 2>/dev/null); do
+              podman cp "${GCP_OIDC_TOKEN_FILE}" "${cid}:/sandbox/workspace/.gcp-oidc-token" 2>/dev/null || true
+            done
+          done
+          EOF
+          chmod +x /tmp/refresh-oidc-token.sh
+          nohup /tmp/refresh-oidc-token.sh > /tmp/oidc-refresh.log 2>&1 &
+          echo "REFRESHER_PID=$!" >> "${GITHUB_ENV}"
+          echo "::notice::Started OIDC token refresher (PID $!)"
+
       # --- QualityFlow pipeline: each agent runs in its own sandbox ---
 
       - name: "QF Stage 1: STP Builder"
