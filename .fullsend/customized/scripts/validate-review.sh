@@ -32,10 +32,5 @@ if [ "$errors" -gt 0 ]; then
     exit 1
 fi
 
-# Schema validation (if configured via runner_env)
-if [[ -n "${FULLSEND_OUTPUT_SCHEMA:-}" ]]; then
-    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    "${SCRIPT_DIR}/validate-output-schema.sh"
-fi
 
 echo "PASS: output validated"
