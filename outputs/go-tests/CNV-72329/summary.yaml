@@ -1,0 +1,37 @@
+status: success
+jira_id: "CNV-72329"
+std_source: "outputs/std/CNV-72329/CNV-72329_test_description.yaml"
+test_files:
+  - nad_live_update_test.go
+test_count: 6
+lsp_patterns_used: false
+scenarios_covered:
+  - id: "TS-CNV-72329-001"
+    title: "NAD swap triggers migration with connectivity"
+    tier: "Functional"
+    priority: "P0"
+  - id: "TS-CNV-72329-002"
+    title: "Migration condition lifecycle"
+    tier: "Functional"
+    priority: "P0"
+  - id: "TS-CNV-72329-003"
+    title: "Feature gate disabled - restart required"
+    tier: "Functional"
+    priority: "P0"
+  - id: "TS-CNV-72329-004"
+    title: "Interface identity preservation"
+    tier: "Functional"
+    priority: "P0"
+  - id: "TS-CNV-72329-005"
+    title: "Multiple secondary networks NAD ref update"
+    tier: "Functional"
+    priority: "P1"
+  - id: "TS-CNV-72329-006"
+    title: "Pod network preservation (regression PR #17315)"
+    tier: "Functional"
+    priority: "P0"
+notes:
+  - "Source repo not available; used project pattern library for code patterns"
+  - "gopls LSP not available; no semantic analysis performed"
+  - "Tier 2 (E2E) scenarios 007-013 are Python-based and excluded from Go test generation"
+  - "Test follows kubevirt/kubevirt SIG-network conventions (SIGDescribe, Serial, decorators)"
