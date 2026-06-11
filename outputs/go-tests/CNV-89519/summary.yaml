@@ -1,0 +1,56 @@
+status: success
+jira_id: CNV-89519
+std_source: outputs/std/CNV-89519/CNV-89519_test_description.yaml
+test_files:
+  - virt_handler_domain_retry_test.go
+  - virt_handler_phase_calculation_test.go
+test_count: 6
+scenarios_implemented:
+  - test_id: TS-CNV-89519-001
+    description: "getDomainWithRetry returns domain after transient socket failure"
+    file: virt_handler_domain_retry_test.go
+    package: cache
+  - test_id: TS-CNV-89519-002
+    description: "getDomainWithRetry returns nil after exhausting all retries"
+    file: virt_handler_domain_retry_test.go
+    package: cache
+  - test_id: TS-CNV-89519-003
+    description: "listAllKnownDomains discovers all ghost record domains"
+    file: virt_handler_domain_retry_test.go
+    package: cache
+  - test_id: TS-CNV-89519-004
+    description: "InitializeGhostRecordCache loads all checkpoint records from disk"
+    file: virt_handler_domain_retry_test.go
+    package: cache
+  - test_id: TS-CNV-89519-005
+    description: "calculateVmPhaseForStatusReason does not transition to Failed when launcher responsive"
+    file: virt_handler_phase_calculation_test.go
+    package: virthandler
+  - test_id: TS-CNV-89519-005b
+    description: "calculateVmPhaseForStatusReason transitions to Failed when launcher unresponsive"
+    file: virt_handler_phase_calculation_test.go
+    package: virthandler
+lsp_patterns_used: false
+skipped_scenarios:
+  - test_id: TS-CNV-89519-006
+    reason: "Tier 2 E2E test — Python/pytest scope, not Go/Ginkgo"
+  - test_id: TS-CNV-89519-007
+    reason: "Tier 2 E2E test — Python/pytest scope, not Go/Ginkgo"
+  - test_id: TS-CNV-89519-008
+    reason: "Tier 2 E2E test — Python/pytest scope, not Go/Ginkgo"
+notes: |
+  Two test files generated:
+  1. virt_handler_domain_retry_test.go (package cache) — Tests for getDomainWithRetry,
+     listAllKnownDomains socket listing, and InitializeGhostRecordCache. These tests
+     live in the pkg/virt-handler/cache package alongside existing domain-watcher_test.go
+     and cache_test.go tests.
+  2. virt_handler_phase_calculation_test.go (package virthandler) — Tests for
+     calculateVmPhaseForStatusReason with nil domain, covering both responsive and
+     unresponsive launcher scenarios. These tests live in the pkg/virt-handler package
+     alongside existing vm_test.go.
+
+  All tests follow existing codebase patterns:
+  - Use fakeLauncherClient (already defined in domain-watcher_test.go) for cache tests
+  - Use MockLauncherClientManager for vm controller tests
+  - Use GinkgoT().TempDir() for temporary directories
+  - Follow existing import conventions and package structure
