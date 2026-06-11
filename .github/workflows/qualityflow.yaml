@@ -718,10 +718,10 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
-          S1_OUTCOME: ${{ steps.stage1.outcome || 'skipped' }}
-          S2_OUTCOME: ${{ steps.stage2.outcome || 'skipped' }}
-          S3_OUTCOME: ${{ steps.stage3.outcome || 'skipped' }}
-          S4_OUTCOME: ${{ steps.stage4.outcome || 'skipped' }}
+          S1_OUTCOME: ${{ steps.stage1.conclusion || 'skipped' }}
+          S2_OUTCOME: ${{ steps.stage2.conclusion || 'skipped' }}
+          S3_OUTCOME: ${{ steps.stage3.conclusion || 'skipped' }}
+          S4_OUTCOME: ${{ steps.stage4.conclusion || 'skipped' }}
           TEST_PR_NUM: ${{ steps.test-pr.outputs.test_pr_number }}
           TEST_GO_COUNT: ${{ steps.test-pr.outputs.go_count }}
           TEST_PY_COUNT: ${{ steps.test-pr.outputs.py_count }}
