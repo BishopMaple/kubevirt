@@ -323,13 +323,35 @@ jobs:
           version: latest
           target-repo: ${{ github.workspace }}/pr-repo
 
+      - name: Restore PR checkout (post-Stage 2)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
+          HEAD_REF="${{ steps.pr-info.outputs.head_ref }}"
+          if [[ ! -d "${PR_REPO}/.git" ]]; then
+            echo "::notice::PR repo was cleaned up by FullSend, re-cloning..."
+            rm -rf "${PR_REPO}"
+            git clone --depth 1 --branch "${HEAD_REF}" \
+              "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" \
+              "${PR_REPO}"
+          else
+            git -C "${PR_REPO}" remote set-url origin \
+              "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+            git -C "${PR_REPO}" fetch origin "${HEAD_REF}"
+            git -C "${PR_REPO}" reset --hard "origin/${HEAD_REF}"
+          fi
+          echo "::notice::PR repo HEAD: $(git -C "${PR_REPO}" log --oneline -1)"
+
       - name: Stage handoff — sync STD output
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
         run: |
           set -euo pipefail
-          DEST="${GITHUB_WORKSPACE}/pr-repo/outputs/std/${JIRA_TICKET}"
+          PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
+          DEST="${PR_REPO}/outputs/std/${JIRA_TICKET}"
 
           # Source 1: FullSend extraction (works if sandbox gRPC was alive)
           STD_FILE=$(find "${GITHUB_WORKSPACE}/output" -name "${JIRA_TICKET}_test_description.yaml" -type f 2>/dev/null | head -1)
@@ -346,25 +368,15 @@ jobs:
             echo "::notice::STD recovered from FullSend extraction"
           fi
 
-          # Source 2: Agent pushed to PR branch (bypasses gRPC via HTTP)
-          if [[ ! -f "${DEST}/${JIRA_TICKET}_test_description.yaml" ]]; then
-            echo "::notice::Checking PR branch for agent-pushed output..."
-            PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
-            HEAD_REF="${{ steps.pr-info.outputs.head_ref }}"
-            # FullSend may have modified git config; re-set remote with token
-            git -C "${PR_REPO}" remote set-url origin \
-              "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-            git -C "${PR_REPO}" fetch origin "${HEAD_REF}" 2>&1 || echo "::warning::git fetch failed"
-            git -C "${PR_REPO}" checkout "${HEAD_REF}" 2>&1 || true
-            git -C "${PR_REPO}" reset --hard "origin/${HEAD_REF}" 2>&1 || true
-            echo "::notice::PR repo HEAD: $(git -C "${PR_REPO}" log --oneline -1)"
-          fi
-
-          # Verify
+          # Source 2: Agent pushed to PR branch (already in restored pr-repo)
           if [[ -f "${DEST}/${JIRA_TICKET}_test_description.yaml" ]]; then
             echo "::notice::STD output available at ${DEST}/"
           else
             echo "::error::No STD output found from any source"
+            echo "::notice::FullSend output dir contents:"
+            find "${GITHUB_WORKSPACE}/output" -type f 2>/dev/null || echo "(empty)"
+            echo "::notice::PR repo outputs dir:"
+            find "${PR_REPO}/outputs" -type f 2>/dev/null || echo "(empty)"
             exit 1
           fi
 
@@ -376,6 +388,44 @@ jobs:
 
       - name: Patch GCP credentials (Stage 3)
         run: bash /tmp/patch-gcp-creds.sh
+
+      - name: Re-inject CLAUDE.md for Stage 3
+        env:
+          JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
+        run: |
+          cat > "${{ github.workspace }}/pr-repo/CLAUDE.md" << 'AGENT_EOF'
+          # QualityFlow Agent — Output Preservation
+
+          CRITICAL REQUIREMENT: Before finishing your task, you MUST push all
+          generated output files to the PR branch. The sandbox file extraction
+          channel is unreliable and output will be lost if you skip this step.
+
+          After writing all output files to $FULLSEND_OUTPUT_DIR, run these
+          commands to push them to the PR branch:
+
+          ```bash
+          # Copy output to target repo
+          DEST="$FULLSEND_TARGET_REPO_DIR/outputs"
+          cd "$FULLSEND_TARGET_REPO_DIR"
+          git config user.email "qualityflow[bot]@users.noreply.github.com"
+          git config user.name "QualityFlow"
+
+          # Derive repo and branch from git state
+          REMOTE_URL=$(git remote get-url origin)
+          REPO_NAME=$(echo "$REMOTE_URL" | sed -n 's|.*github\.com[:/]\(.*\)\.git|\1|p')
+          BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+          # Authenticate and push
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO_NAME}.git"
+          git add outputs/
+          git commit -m "Add QualityFlow output for $JIRA_TICKET [skip ci]" || true
+          git push origin "HEAD:$BRANCH" || echo "Push failed — output available in sandbox artifacts"
+          ```
+
+          This is MANDATORY. Do not consider your task complete until you have
+          attempted the git push.
+          AGENT_EOF
+          echo "::notice::Re-injected CLAUDE.md for Stage 3"
 
       - name: "QF Stage 3: Go Test Generator"
         id: stage3
