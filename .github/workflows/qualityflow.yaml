@@ -349,7 +349,15 @@ jobs:
           # Source 2: Agent pushed to PR branch (bypasses gRPC via HTTP)
           if [[ ! -f "${DEST}/${JIRA_TICKET}_test_description.yaml" ]]; then
             echo "::notice::Checking PR branch for agent-pushed output..."
-            git -C "${GITHUB_WORKSPACE}/pr-repo" pull origin "${{ steps.pr-info.outputs.head_ref }}" --rebase 2>/dev/null || true
+            PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
+            HEAD_REF="${{ steps.pr-info.outputs.head_ref }}"
+            # FullSend may have modified git config; re-set remote with token
+            git -C "${PR_REPO}" remote set-url origin \
+              "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+            git -C "${PR_REPO}" fetch origin "${HEAD_REF}" 2>&1 || echo "::warning::git fetch failed"
+            git -C "${PR_REPO}" checkout "${HEAD_REF}" 2>&1 || true
+            git -C "${PR_REPO}" reset --hard "origin/${HEAD_REF}" 2>&1 || true
+            echo "::notice::PR repo HEAD: $(git -C "${PR_REPO}" log --oneline -1)"
           fi
 
           # Verify
