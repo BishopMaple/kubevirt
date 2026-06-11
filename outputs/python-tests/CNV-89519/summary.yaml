@@ -1,0 +1,31 @@
+status: success
+jira_id: CNV-89519
+std_source: outputs/std/CNV-89519/CNV-89519_test_description.yaml
+total_std_scenarios: 8
+tier1_scenarios_skipped: 5
+tier2_scenarios_processed: 3
+test_files:
+  - test_virt_handler_domain_reconciliation.py
+  - conftest.py
+test_count: 3
+test_functions:
+  - name: test_running_vm_survives_virt_handler_pod_deletion
+    scenario_id: TS-CNV-89519-006
+    priority: P0
+    mvp: true
+  - name: test_multiple_vms_survive_virt_handler_rolling_update
+    scenario_id: TS-CNV-89519-007
+    priority: P1
+    mvp: false
+  - name: test_running_vms_survive_cnv_upgrade
+    scenario_id: TS-CNV-89519-008
+    priority: P2
+    mvp: false
+lsp_patterns_used: false
+conftest_generated: true
+pattern_library_used: true
+pattern_matched: vm_lifecycle
+validation:
+  syntax_check: passed
+  scenario_coverage: 3/3
+  all_scenario_ids_referenced: true
