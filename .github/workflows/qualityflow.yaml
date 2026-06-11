@@ -217,6 +217,44 @@ jobs:
 
       # --- QualityFlow pipeline: each agent runs in its own sandbox ---
 
+      - name: Inject agent push instructions
+        env:
+          JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
+        run: |
+          cat > "${{ github.workspace }}/pr-repo/CLAUDE.md" << 'AGENT_EOF'
+          # QualityFlow Agent — Output Preservation
+
+          CRITICAL REQUIREMENT: Before finishing your task, you MUST push all
+          generated output files to the PR branch. The sandbox file extraction
+          channel is unreliable and output will be lost if you skip this step.
+
+          After writing all output files to $FULLSEND_OUTPUT_DIR, run these
+          commands to push them to the PR branch:
+
+          ```bash
+          # Copy output to target repo
+          DEST="$FULLSEND_TARGET_REPO_DIR/outputs"
+          cd "$FULLSEND_TARGET_REPO_DIR"
+          git config user.email "qualityflow[bot]@users.noreply.github.com"
+          git config user.name "QualityFlow"
+
+          # Derive repo and branch from git state
+          REMOTE_URL=$(git remote get-url origin)
+          REPO_NAME=$(echo "$REMOTE_URL" | sed -n 's|.*github\.com[:/]\(.*\)\.git|\1|p')
+          BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+          # Authenticate and push
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO_NAME}.git"
+          git add outputs/
+          git commit -m "Add QualityFlow output for $JIRA_TICKET [skip ci]" || true
+          git push origin "HEAD:$BRANCH" || echo "Push failed — output available in sandbox artifacts"
+          ```
+
+          This is MANDATORY. Do not consider your task complete until you have
+          attempted the git push.
+          AGENT_EOF
+          echo "::notice::Injected CLAUDE.md push instructions into PR repo"
+
       - name: "QF Stage 1: STP Builder"
         uses: ./.defaults/
         env:
