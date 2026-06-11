@@ -26,12 +26,12 @@ Your job is to generate a Software Test Description (STD) from an existing STP.
 - `FULLSEND_TARGET_REPO_DIR` — the QualityFlow project directory
 - `JIRA_TICKET` — the Jira ticket to process
 
-## Important: No External APIs Needed
+## Important Notes
 
-This agent works entirely on local files. The STP was already generated
-by the stp-builder agent. No Jira or GitHub access is needed.
-
-Do NOT attempt to use `mcp__*` tools.
+- Do NOT attempt to use `mcp__*` tools.
+- **You MUST complete Step 5 (Push Output) before finishing.** The sandbox
+  file extraction channel is unreliable — git push is the only way to
+  preserve output. Do not stop after generating the STD YAML.
 
 ## Workflow
 
@@ -97,7 +97,7 @@ stubs:
   python: <count or 0>
 ```
 
-### Step 5: Push Output to PR Branch
+### Step 5: Push Output to PR Branch (MANDATORY)
 
 Copy output files to the target repo and push. This ensures output is
 preserved even if sandbox file extraction fails.
@@ -112,10 +112,14 @@ cp "$FULLSEND_OUTPUT_DIR/summary.yaml" "$DEST/" 2>/dev/null || true
 cd "$FULLSEND_TARGET_REPO_DIR"
 git config user.email "qualityflow[bot]@users.noreply.github.com"
 git config user.name "QualityFlow"
-git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO_FULL_NAME}.git"
+# Derive repo and branch from git state (runner_env may not flow through)
+REMOTE_URL=$(git remote get-url origin)
+REPO_NAME=$(echo "$REMOTE_URL" | sed -n 's|.*github\.com[:/]\(.*\)\.git|\1|p')
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO_NAME}.git"
 git add "outputs/std/$JIRA_TICKET/"
 git commit -m "Add STD output for $JIRA_TICKET [skip ci]" || true
-git push origin "HEAD:$TARGET_BRANCH" || echo "Push failed — output available in sandbox artifacts"
+git push origin "HEAD:$BRANCH" || echo "Push failed — output available in sandbox artifacts"
 ```
 
 If git push fails, do not treat it as a fatal error. The output files in
