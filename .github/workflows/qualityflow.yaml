@@ -145,6 +145,8 @@ jobs:
           fi
 
           if [[ -z "${JIRA_TICKET}" ]]; then
+            gh api --method POST "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+              -f body="**QualityFlow:** Could not detect a Jira ticket from this PR. Please specify it explicitly: \`/qf CNV-12345\`"
             echo "::error::No Jira ticket found in /qf command, PR title, body, or branch name"
             exit 1
           fi
