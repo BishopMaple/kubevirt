@@ -1,0 +1,33 @@
+status: success
+jira_id: CNV-72329
+std_source: outputs/std/CNV-72329/CNV-72329_test_description.yaml
+test_files:
+  - test_nad_live_update_core.py
+  - test_nad_live_update_multi_interface.py
+  - test_nad_live_update_negative.py
+  - test_nad_live_update_edge_cases.py
+  - test_nad_live_update_validation.py
+  - conftest.py
+test_count: 13
+lsp_patterns_used: false
+conftest_generated: true
+scenarios_covered:
+  - "005: NAD swap connectivity end-to-end (P0)"
+  - "001: NAD swap triggers migration (P0)"
+  - "003: Interface identity preserved after NAD swap (P0)"
+  - "009: Multi-interface simultaneous NAD swap (P1)"
+  - "010: Partial NAD update preserves unchanged interface (P1)"
+  - "011: Multi-interface NAD swap connectivity (P1)"
+  - "004: Non-existent NAD handled gracefully (P1)"
+  - "021: No-op NAD change no migration (P2)"
+  - "023: RBAC non-admin rejection (P1)"
+  - "015: NAD swap during hotplug (P2)"
+  - "022: Migration target unavailable (P2)"
+  - "018: Namespace-qualified NAD name equivalence (P1)"
+  - "019: VMI spec sync after NAD change (P0)"
+  - "020: Pod network isolation from NAD sync (P1)"
+notes:
+  - "Tier 2 Python/pytest tests using openshift-python-wrapper patterns"
+  - "Tests follow AGENTS.md coding standards (context managers, timeout_sampler, no defensive programming)"
+  - "Scenarios 006-008 (feature gate toggle) and 012-014 (hotplug/hotunplug/link state post-swap) are tier 1 Go/Ginkgo tests — not generated as Python tier 2"
+  - "Upgrade test (TestNADLiveUpdateUpgrade) included with @pytest.mark.upgrade marker"
