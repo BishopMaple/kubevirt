@@ -1,0 +1,26 @@
+status: success
+jira_id: CNV-72329
+stp_source: outputs/stp/CNV-72329/CNV-72329_test_plan.md
+std_yaml: outputs/std/CNV-72329/CNV-72329_test_description.yaml
+test_counts:
+  total: 20
+  tier1: 10
+  tier2: 10
+stubs:
+  go: 10
+  python: 10
+go_files:
+  - live_update_nad_ref_stubs_test.go
+  - live_update_nad_ref_feature_gate_stubs_test.go
+  - live_update_nad_ref_namespace_stubs_test.go
+  - live_update_nad_ref_edge_cases_stubs_test.go
+python_files:
+  - test_live_update_nad_ref_connectivity_stubs.py
+  - test_live_update_nad_ref_multi_interface_stubs.py
+  - test_live_update_nad_ref_error_handling_stubs.py
+  - test_live_update_nad_ref_upgrade_stubs.py
+priority_distribution:
+  P0: 6
+  P1: 9
+  P2: 5
+generated_date: "2026-06-11"
