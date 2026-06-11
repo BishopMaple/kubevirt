@@ -1,0 +1,44 @@
+# LSP Pattern Analysis for CNV-72329 (Tier 2)
+# Source: config/projects/cnv/patterns/tier2_patterns.yaml (fallback - no source repo available)
+
+jira_id: CNV-72329
+analysis_source: pattern_library_fallback
+source_repo_available: false
+
+matched_template: network_connectivity
+match_reason: "Keywords 'NAD', 'connectivity', 'ping' matched network_connectivity template"
+match_priority: 6
+
+detected_patterns:
+  - name: network_connectivity
+    confidence: high
+    keywords_matched:
+      - NAD
+      - connectivity
+      - ping
+      - migration
+  - name: migration
+    confidence: medium
+    keywords_matched:
+      - migration
+      - migrate
+      - live migration
+
+fixture_patterns:
+  nad_fixtures:
+    - source_nad_scope_class
+    - target_nad_scope_class
+    - third_nad_scope_class
+  vm_fixtures:
+    - vm_with_source_nad_scope_class
+    - peer_vm_on_target_nad_scope_class
+    - peer_vm_on_source_nad_scope_class
+
+import_patterns_used:
+  - "from utilities.network import assert_ping_successful, get_vmi_ip_v4_by_name, network_nad"
+  - "from utilities.virt import VirtualMachineForTests, fedora_vm_body, running_vm, migrate_vm_and_verify"
+  - "from tests.network.utils import assert_no_ping"
+
+critical_pattern_checks:
+  localnet_detection: false
+  reason: "No localnet keywords detected - using standard network_nad approach"
