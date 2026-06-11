@@ -1,10 +1,12 @@
 # Standalone QualityFlow workflow — multi-agent QE pipeline for a PR.
-# Triggered by commenting /qf on a PR (optionally with Jira ticket: /qf CNV-12345).
+# Triggered by commenting /qf on a PR. Jira ticket is auto-detected from
+# the comment (e.g. /qf CNV-12345), PR title, or PR body.
 # Uses FullSend infrastructure (WIF auth, sandboxed agent execution).
 #
-# Pipeline: stp-builder → std-builder → go-test-generator → python-test-generator → clean test PR
+# Pipeline: stp-builder → std-builder → go-test-generator → python-test-generator
 # Each agent runs in its own FullSend sandbox, passing outputs via the PR repo.
-# After all agents complete, a clean test PR is created with only implemented test files.
+# After all agents complete, test files are organized under qf-tests/{JIRA_ID}/
+# and intermediate artifacts are cleaned up — all on the code PR branch.
 name: qualityflow
 
 permissions:
@@ -136,8 +138,14 @@ jobs:
             fi
           fi
 
+          # Fallback: branch name (FullSend branches often include the ticket ID).
           if [[ -z "${JIRA_TICKET}" ]]; then
-            echo "::error::No Jira ticket found in /qf command, PR title, or PR body"
+            HEAD_REF="${{ steps.pr-info.outputs.head_ref }}"
+            JIRA_TICKET=$(printf '%s\n' "${HEAD_REF}" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -1 || true)
+          fi
+
+          if [[ -z "${JIRA_TICKET}" ]]; then
+            echo "::error::No Jira ticket found in /qf command, PR title, body, or branch name"
             exit 1
           fi
 
@@ -543,9 +551,7 @@ jobs:
           version: latest
           target-repo: ${{ github.workspace }}/pr-repo
 
-      # --- Post-pipeline: clean code PR, then create test-only PR ---
-      # Order matters: clean the base branch FIRST so the test PR diff
-      # shows only added test files (no deleted outputs/ noise).
+      # --- Post-pipeline: replace intermediate outputs with organized test files ---
 
       - name: Restore PR checkout (post-Stage 4)
         env:
@@ -568,104 +574,48 @@ jobs:
           fi
           echo "::notice::PR repo HEAD: $(git -C "${PR_REPO}" log --oneline -1)"
 
-      - name: Save test files before cleanup
-        id: save-tests
+      - name: Organize tests and clean artifacts
+        id: organize-tests
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
         run: |
           set -euo pipefail
           PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
-          STASH="/tmp/qf-test-stash"
-          rm -rf "${STASH}"
-          mkdir -p "${STASH}/go" "${STASH}/python"
+          HEAD_REF="${{ steps.pr-info.outputs.head_ref }}"
+          QF_DIR="qf-tests/${JIRA_TICKET}"
 
-          # Save Go test files
-          GO_SRC="${PR_REPO}/outputs/go-tests/${JIRA_TICKET}"
+          cd "${PR_REPO}"
+          git config user.email "guyoron1@users.noreply.github.com"
+          git config user.name "QualityFlow"
+
+          # --- Collect Go test files ---
+          GO_SRC="outputs/go-tests/${JIRA_TICKET}"
           GO_COUNT=0
           if [[ -d "${GO_SRC}" ]]; then
+            mkdir -p "${QF_DIR}/go"
             for testfile in "${GO_SRC}"/*_test.go; do
               [[ -f "${testfile}" ]] || continue
-              cp "${testfile}" "${STASH}/go/"
+              cp "${testfile}" "${QF_DIR}/go/"
               GO_COUNT=$((GO_COUNT + 1))
             done
           fi
 
-          # Save Python test files
-          PY_SRC="${PR_REPO}/outputs/python-tests/${JIRA_TICKET}"
+          # --- Collect Python test files ---
+          PY_SRC="outputs/python-tests/${JIRA_TICKET}"
           PY_COUNT=0
           if [[ -d "${PY_SRC}" ]]; then
+            mkdir -p "${QF_DIR}/python"
             for pyfile in "${PY_SRC}"/test_*.py "${PY_SRC}"/conftest.py; do
               [[ -f "${pyfile}" ]] || continue
-              cp "${pyfile}" "${STASH}/python/"
+              cp "${pyfile}" "${QF_DIR}/python/"
               PY_COUNT=$((PY_COUNT + 1))
             done
           fi
 
-          echo "go_count=${GO_COUNT}" >> "${GITHUB_OUTPUT}"
-          echo "py_count=${PY_COUNT}" >> "${GITHUB_OUTPUT}"
-          echo "::notice::Saved ${GO_COUNT} Go + ${PY_COUNT} Python test files to stash"
-
-      - name: Clean artifacts from code PR
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
-          HEAD_REF="${{ steps.pr-info.outputs.head_ref }}"
-
-          cd "${PR_REPO}"
-          git config user.email "guyoron1@users.noreply.github.com"
-          git config user.name "QualityFlow"
-
-          git rm -rf outputs/ 2>/dev/null || true
-          git rm -f CLAUDE.md 2>/dev/null || true
-
-          if ! git diff --cached --quiet; then
-            git commit -m "Clean QualityFlow intermediate artifacts [skip ci]"
-            git push origin "HEAD:${HEAD_REF}"
-            echo "::notice::Cleaned outputs/ and CLAUDE.md from code PR branch"
-          else
-            echo "::notice::No artifacts to clean from code PR branch"
-          fi
-
-      - name: Create clean test PR
-        id: test-pr
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
-        run: |
-          set -euo pipefail
-          PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
-          HEAD_REF="${{ steps.pr-info.outputs.head_ref }}"
-          TEST_BRANCH="qf/${JIRA_TICKET}/tests"
-          STASH="/tmp/qf-test-stash"
-          GO_COUNT="${{ steps.save-tests.outputs.go_count }}"
-          PY_COUNT="${{ steps.save-tests.outputs.py_count }}"
-
-          cd "${PR_REPO}"
-          git config user.email "guyoron1@users.noreply.github.com"
-          git config user.name "QualityFlow"
-
-          # Fetch the freshly-cleaned code PR branch
-          git fetch origin "${HEAD_REF}"
-          git checkout -B "${TEST_BRANCH}" "origin/${HEAD_REF}"
-
-          # --- Place all test files under qf-tests/{JIRA_ID}/ ---
-          QF_DIR="qf-tests/${JIRA_TICKET}"
-
-          if [[ -d "${STASH}/go" ]]; then
-            mkdir -p "${QF_DIR}/go"
-            cp "${STASH}/go/"*/*_test.go "${QF_DIR}/go/"
-            echo "::notice::Go tests → ${QF_DIR}/go/"
-          fi
-
-          if [[ "${PY_COUNT}" -gt 0 ]]; then
-            mkdir -p "${QF_DIR}/python"
-            cp "${STASH}/python/"* "${QF_DIR}/python/"
-            echo "::notice::Python tests → ${QF_DIR}/python/"
-          fi
-
-          cat > "${QF_DIR}/README.md" << README_EOF
+          # --- Write README ---
+          if [[ "${GO_COUNT}" -gt 0 ]] || [[ "${PY_COUNT}" -gt 0 ]]; then
+            cat > "${QF_DIR}/README.md" << README_EOF
           # QualityFlow Tests — ${JIRA_TICKET}
 
           Generated by the QualityFlow pipeline.
@@ -675,12 +625,17 @@ jobs:
           | \`go/\` | Tier 1 (functional) | Go/Ginkgo | \`kubevirt/kubevirt\` |
           | \`python/\` | Tier 2 (E2E) | Python/pytest | \`RedHatQE/openshift-virtualization-tests\` |
           README_EOF
+          fi
 
+          # --- Remove intermediate artifacts ---
+          git rm -rf outputs/ 2>/dev/null || true
+          git rm -f CLAUDE.md 2>/dev/null || true
+
+          # --- Stage test files ---
           git add qf-tests/ 2>/dev/null || true
 
           if git diff --cached --quiet; then
-            echo "::warning::No test files found to create test PR"
-            echo "test_pr_created=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::No changes to commit"
             echo "go_count=0" >> "${GITHUB_OUTPUT}"
             echo "py_count=0" >> "${GITHUB_OUTPUT}"
             exit 0
@@ -688,43 +643,16 @@ jobs:
 
           git commit -m "Add QualityFlow tests for ${JIRA_TICKET}
 
-          Go tier 1 tests: ${GO_COUNT} files
-          Python tier 2 tests: ${PY_COUNT} files
-          Jira: ${JIRA_TICKET}"
+          Replaces intermediate pipeline artifacts with organized test files.
 
-          git push --force-with-lease origin "HEAD:${TEST_BRANCH}"
+          Go tier 1 tests: ${GO_COUNT} files → qf-tests/${JIRA_TICKET}/go/
+          Python tier 2 tests: ${PY_COUNT} files → qf-tests/${JIRA_TICKET}/python/
+          Jira: ${JIRA_TICKET}
+          [skip ci]"
 
-          # Create or reuse PR targeting the code PR branch (stacked PR)
-          EXISTING_PR=$(gh pr list --repo "${{ github.repository }}" --head "${TEST_BRANCH}" --json number --jq '.[0].number // empty' 2>/dev/null || true)
-          if [[ -n "${EXISTING_PR}" ]]; then
-            echo "::notice::Test PR already exists: #${EXISTING_PR}"
-            echo "test_pr_number=${EXISTING_PR}" >> "${GITHUB_OUTPUT}"
-          else
-            PR_URL=$(gh pr create \
-              --repo "${{ github.repository }}" \
-              --head "${TEST_BRANCH}" \
-              --base "${HEAD_REF}" \
-              --title "tests(${JIRA_TICKET}): QualityFlow generated tests" \
-              --body "$(cat <<PR_BODY_EOF
-          ## QualityFlow Test PR
+          git push origin "HEAD:${HEAD_REF}"
+          echo "::notice::Pushed ${GO_COUNT} Go + ${PY_COUNT} Python tests to code PR"
 
-          Generated test implementations for **${JIRA_TICKET}**.
-
-          | Type | Count | Location |
-          |------|-------|----------|
-          | Go/Ginkgo tier 1 | ${GO_COUNT} | \`qf-tests/${JIRA_TICKET}/go/\` |
-          | Python/pytest tier 2 | ${PY_COUNT} | \`qf-tests/${JIRA_TICKET}/python/\` |
-
-          ---
-          *Generated by QualityFlow pipeline*
-          PR_BODY_EOF
-          )")
-            PR_NUM=$(echo "${PR_URL}" | grep -oE '[0-9]+$')
-            echo "::notice::Created test PR: ${PR_URL}"
-            echo "test_pr_number=${PR_NUM}" >> "${GITHUB_OUTPUT}"
-          fi
-
-          echo "test_pr_created=true" >> "${GITHUB_OUTPUT}"
           echo "go_count=${GO_COUNT}" >> "${GITHUB_OUTPUT}"
           echo "py_count=${PY_COUNT}" >> "${GITHUB_OUTPUT}"
 
@@ -737,9 +665,8 @@ jobs:
           S2_OUTCOME: ${{ steps.stage2.conclusion || 'skipped' }}
           S3_OUTCOME: ${{ steps.stage3.conclusion || 'skipped' }}
           S4_OUTCOME: ${{ steps.stage4.conclusion || 'skipped' }}
-          TEST_PR_NUM: ${{ steps.test-pr.outputs.test_pr_number }}
-          TEST_GO_COUNT: ${{ steps.test-pr.outputs.go_count }}
-          TEST_PY_COUNT: ${{ steps.test-pr.outputs.py_count }}
+          TEST_GO_COUNT: ${{ steps.organize-tests.outputs.go_count }}
+          TEST_PY_COUNT: ${{ steps.organize-tests.outputs.py_count }}
         run: |
           set -euo pipefail
           PR_NUMBER="${{ steps.pr-info.outputs.pr_number }}"
@@ -754,12 +681,6 @@ jobs:
             esac
           }
 
-          if [[ -n "${TEST_PR_NUM}" ]]; then
-            TEST_PR_LINK="**[Test PR #${TEST_PR_NUM}](https://github.com/${{ github.repository }}/pull/${TEST_PR_NUM})**"
-          else
-            TEST_PR_LINK="_No test PR created_"
-          fi
-
           BODY="<!-- qf-summary -->
           ## QualityFlow Pipeline Summary
 
@@ -771,9 +692,10 @@ jobs:
           | 4 | Python Test Generator | $(icon "${S4_OUTCOME}") |
 
           ### Test Output
-          - Go/Ginkgo tier 1: **${GO_COUNT}** files
-          - Python/pytest tier 2: **${PY_COUNT}** files
-          - ${TEST_PR_LINK}
+          | Type | Count | Location |
+          |------|-------|----------|
+          | Go/Ginkgo tier 1 | **${GO_COUNT}** files | \`qf-tests/${JIRA_TICKET}/go/\` |
+          | Python/pytest tier 2 | **${PY_COUNT}** files | \`qf-tests/${JIRA_TICKET}/python/\` |
 
           **Jira:** [${JIRA_TICKET}](https://issues.redhat.com/browse/${JIRA_TICKET})
 
