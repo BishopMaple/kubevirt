@@ -1,37 +1,58 @@
 status: success
-jira_id: "CNV-72329"
-std_source: "outputs/std/CNV-72329/CNV-72329_test_description.yaml"
+jira_id: CNV-72329
+std_source: outputs/std/CNV-72329/CNV-72329_test_description.yaml
 test_files:
-  - nad_live_update_test.go
-test_count: 6
+  - nad_live_update_core_test.go
+  - nad_live_update_feature_gate_test.go
+  - nad_live_update_multi_interface_test.go
+  - nad_live_update_hotplug_interaction_test.go
+  - nad_live_update_migration_evaluator_test.go
+  - nad_live_update_vm_controller_test.go
+  - nad_live_update_edge_cases_test.go
+test_count: 19
+scenarios_implemented:
+  go_ginkgo: [1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13, 14, 16, 17, 18, 19, 20, 21, 23]
+  skipped_e2e_python: [5, 11, 15, 22]
 lsp_patterns_used: false
-scenarios_covered:
-  - id: "TS-CNV-72329-001"
-    title: "NAD swap triggers migration with connectivity"
-    tier: "Functional"
-    priority: "P0"
-  - id: "TS-CNV-72329-002"
-    title: "Migration condition lifecycle"
-    tier: "Functional"
-    priority: "P0"
-  - id: "TS-CNV-72329-003"
-    title: "Feature gate disabled - restart required"
-    tier: "Functional"
-    priority: "P0"
-  - id: "TS-CNV-72329-004"
-    title: "Interface identity preservation"
-    tier: "Functional"
-    priority: "P0"
-  - id: "TS-CNV-72329-005"
-    title: "Multiple secondary networks NAD ref update"
-    tier: "Functional"
-    priority: "P1"
-  - id: "TS-CNV-72329-006"
-    title: "Pod network preservation (regression PR #17315)"
-    tier: "Functional"
-    priority: "P0"
-notes:
-  - "Source repo not available; used project pattern library for code patterns"
-  - "gopls LSP not available; no semantic analysis performed"
-  - "Tier 2 (E2E) scenarios 007-013 are Python-based and excluded from Go test generation"
-  - "Test follows kubevirt/kubevirt SIG-network conventions (SIGDescribe, Serial, decorators)"
+pattern_source: config/projects/cnv/patterns/tier1_patterns.yaml
+reference_test: tests/network/nad_live_update.go
+conventions_applied:
+  - "SIG() wrapper from tests/network/framework.go"
+  - "patch.New() for generating JSON patches"
+  - "matcher.ThisVM/ThisVMI with HaveConditionTrue/MissingOrFalse"
+  - "config.EnableFeatureGate/DisableFeatureGate"
+  - "Alpine VMIs with cloud-init network data for static IPs"
+  - "libnet.NewBridgeNetAttachDef for NAD creation"
+  - "decorators.RequiresTwoSchedulableNodes for migration tests"
+  - "Serial decorator for NAD tests"
+  - "kubecli.KubevirtClient for API calls"
+  - "Ordered context for test dependencies"
+groups:
+  core_nad_live_update:
+    file: nad_live_update_core_test.go
+    scenarios: [1, 2, 3, 4]
+    description: "Core NAD reference live update with migration, connectivity, identity preservation, and error handling"
+  feature_gate_behavior:
+    file: nad_live_update_feature_gate_test.go
+    scenarios: [6, 7, 8]
+    description: "Feature gate enabled/disabled behavior for RestartRequired vs live migration"
+  multiple_interfaces:
+    file: nad_live_update_multi_interface_test.go
+    scenarios: [9, 10]
+    description: "Simultaneous and partial NAD updates on multi-interface VMs"
+  hotplug_interaction:
+    file: nad_live_update_hotplug_interaction_test.go
+    scenarios: [12, 13, 14]
+    description: "NIC hotplug/hotunplug and link state after NAD swap"
+  migration_evaluator:
+    file: nad_live_update_migration_evaluator_test.go
+    scenarios: [16, 17, 18]
+    description: "Migration evaluator detection, condition clearing, and namespace qualification"
+  vm_controller_sync:
+    file: nad_live_update_vm_controller_test.go
+    scenarios: [19, 20]
+    description: "VM controller NAD sync to VMI and pod network preservation"
+  edge_cases:
+    file: nad_live_update_edge_cases_test.go
+    scenarios: [21, 23]
+    description: "No-op changes and invalid NAD swap targets"
