@@ -1,0 +1,32 @@
+status: success
+jira_id: CNV-72329
+file_path: /sandbox/workspace/output/CNV-72329_test_plan.md
+test_counts:
+  tier1: 17
+  tier2: 4
+  total: 21
+feature_summary: "NAD Reference Live Update for Secondary VM Networks"
+parent_feature: "VIRTSTRAT-560 - Allow changing network VLAN on the fly"
+component: "CNV Network"
+owning_sig: "sig-network"
+key_prs:
+  - "kubevirt/kubevirt#16412 - net: Implement Live Update of NAD Reference"
+  - "kubevirt/kubevirt#14602 - vm ctrl: Allow live changes to network fields"
+  - "kubevirt/kubevirt#17904 - e2e, net, nad-hp: Verify iface name and mac remains same"
+lsp_analysis:
+  files_analyzed:
+    - "pkg/network/vmliveupdate/restart.go"
+    - "pkg/network/controllers/vm.go"
+    - "pkg/network/migration/evaluator.go"
+  key_functions:
+    - "IsRestartRequired -> syncRestartRequired (vm.go:2988)"
+    - "VMController.Sync -> syncVMIInterfaces -> syncNetworks"
+    - "Evaluator.Evaluate -> shouldVMIBeMarkedForAutoMigration"
+  feature_gate: "LiveUpdateNADRef (Beta)"
+regression_areas:
+  - "NIC hotplug/hotunplug flows"
+  - "Link state management"
+  - "RestartRequired condition logic"
+  - "Migration evaluator"
+pipeline_phase: stp
+pipeline_status: completed
