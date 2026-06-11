@@ -1,192 +1,300 @@
 # Openshift-virtualization-tests Test plan
 
-## **NAD Reference Live Update for Secondary VM Networks - Quality Engineering Plan**
+## **Live Update NAD Reference for VM Secondary Networks - Quality Engineering Plan**
 
 ### **Metadata & Tracking**
 
-| Field                  | Details                                                                                                  |
-|:-----------------------|:---------------------------------------------------------------------------------------------------------|
-| **Enhancement(s)**     | [VEP 140](https://github.com/kubevirt/enhancements/issues/140)                                           |
-| **Feature in Jira**    | [VIRTSTRAT-560](https://redhat.atlassian.net/browse/VIRTSTRAT-560) - Allow changing network VLAN on the fly |
-| **Jira Tracking**      | [CNV-72329](https://redhat.atlassian.net/browse/CNV-72329) (Epic)                                       |
-| **QE Owner(s)**        | [QE Owner TBD]                                                                                           |
-| **Owning SIG**         | sig-network                                                                                              |
-| **Participating SIGs** | sig-compute                                                                                              |
-| **Current Status**     | Draft                                                                                                    |
+- **Enhancement(s):** [VEP 140 - Live Update of NAD Reference](https://github.com/kubevirt/enhancements/issues/140)
+- **Feature in Jira:** [VIRTSTRAT-560 - Allow changing network VLAN on the fly](https://redhat.atlassian.net/browse/VIRTSTRAT-560)
+- **Jira Tracking:** [CNV-72329 - Support changing the VM attached network NAD ref using hotplug](https://redhat.atlassian.net/browse/CNV-72329)
+- **QE Owner(s):** [Name(s)]
+- **Owning SIG:** sig-network
+- **Participating SIGs:** sig-compute
 
-**Document Conventions:**
-- **NAD** - NetworkAttachmentDefinition (Multus CRD defining secondary network attachment)
-- **VMI** - VirtualMachineInstance (the running instance of a VM)
-- **LiveUpdateNADRef** - Feature gate controlling live NAD reference update capability
-- **NAD swap / NAD live update** - Changing the NAD reference on a running VM's secondary network interface
+**Document Conventions (if applicable):** NAD = Network Attachment Definition. VMI = VirtualMachineInstance. HCO = HyperConverged Operator. VLAN = Virtual LAN. LiveUpdateNADRef = feature gate controlling this feature.
 
 ### **Feature Overview**
 
-This feature allows VM administrators to change the network a running VM is connected to by updating the NAD (NetworkAttachmentDefinition) reference on a secondary interface, without requiring a VM reboot. When the `LiveUpdateNADRef` feature gate is enabled, changing the NAD reference on a VM spec triggers an automatic live migration to apply the new network attachment, rather than setting the `RestartRequired` condition. This enables seamless VLAN or network segment changes for running workloads, preserving guest uptime and reducing operational disruption.
-
-The implementation spans:
-- **`pkg/network/vmliveupdate/restart.go`** - Logic to determine if a network change requires restart vs. live update (when feature gate is enabled, NAD name changes are excluded from restart requirement)
-- **`pkg/network/controllers/vm.go`** - VM controller that syncs NAD references from VM spec to VMI spec when feature gate is enabled
-- **`pkg/network/migration/evaluator.go`** - Migration evaluator that detects NAD name mismatches between VMI spec and pod network status, triggering automatic migration
-- **`pkg/virt-config/featuregate/active.go`** - `LiveUpdateNADRef` feature gate (Beta status)
-
-**Related upstream PRs:**
-- [kubevirt/kubevirt#16412](https://github.com/kubevirt/kubevirt/pull/16412) - Core implementation: Live Update of NAD Reference
-- [kubevirt/kubevirt#14602](https://github.com/kubevirt/kubevirt/pull/14602) - Allow live changes to network fields (RestartRequired logic)
-- [kubevirt/kubevirt#17904](https://github.com/kubevirt/kubevirt/pull/17904) - E2E: Verify iface name and mac remain same after NAD hotplug
+This feature enables customers to change the network a running VM is connected to by updating the NAD (Network Attachment Definition) reference on a VM's secondary network interface, without requiring a VM restart. When the `LiveUpdateNADRef` feature gate is enabled and the VM rollout strategy is set to `LiveUpdate`, changing the NAD reference triggers an automatic live migration to apply the new network attachment. This allows VM administrators to swap a guest's uplink from one network to another (e.g., change VLAN) transparently, without the VM noticing any disruption.
 
 ---
 
 ### **I. Motivation and Requirements Review (QE Review Guidelines)**
 
+This section documents the mandatory QE review process. The goal is to understand the feature's value, technology, and testability before formal test planning.
+
 #### **1. Requirement & User Story Review Checklist**
 
-| Check                                  | Done | Details/Notes                                                                                                                                                                                                                          | Comments                                                     |
-|:---------------------------------------|:-----|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------|
-| **Review Requirements**                | [x]  | Reviewed CNV-72329, VIRTSTRAT-560, CNV-60118, and VEP 140. Feature allows changing NAD reference on running VM secondary interfaces via live migration.                                                                                |                                                              |
-| **Understand Value**                   | [x]  | **Customer value:** VM admins can swap a guest's uplink from one network/VLAN to another without the VM noticing, avoiding downtime. D/S: maps to VIRTSTRAT-560. U/S: VM admin seamless network switching.                             |                                                              |
-| **Customer Use Cases**                 | [x]  | RFE CNV-60118: Customer request to switch NADs without VM restart/downtime. Use cases: VLAN migration, network segment isolation changes, link quality upgrades.                                                                       |                                                              |
-| **Testability**                        | [x]  | Feature is testable: create VM with secondary Multus network, patch NAD reference, verify migration occurs and connectivity to new network is established.                                                                              |                                                              |
-| **Acceptance Criteria**                | [x]  | 1) NAD ref change triggers live migration (not restart). 2) VM connectivity on new network after migration. 3) Interface name and MAC preserved. 4) Feature gated by `LiveUpdateNADRef`. 5) RestartRequired NOT set for NAD-only changes. |                                                              |
-| **Non-Functional Requirements (NFRs)** | [x]  | Performance: Migration should complete within standard timeframes. Monitoring: Standard VMI migration conditions used. Security: No new RBAC changes (uses existing VM edit permissions).                                                | No special NFRs beyond standard migration performance bounds |
+- [ ] **Review Requirements** -- Reviewed the relevant requirements.
+    - VEP 140 defines the LiveUpdateNADRef feature gate and the mechanism for updating NAD references via live migration.
+    - CNV-72329 epic covers the downstream enablement with subtasks for upstream design, tests, and documentation.
+    - Parent feature VIRTSTRAT-560 describes the high-level goal of changing network VLAN on the fly.
 
-#### **2. Technology and Design Review**
+- [ ] **Understand Value** -- Confirmed clear user stories and understood. Understand the difference between U/S and D/S requirements. **What is the value of the feature for RH customers.**
+    - User Story: "As a VM admin, I want to swap the guest's uplink from one network to another without the VM noticing, so they get better/worse link, different VLAN, or isolated segment."
+    - Value: Eliminates VM downtime when changing network segments (e.g., VLAN reassignment), enabling seamless network infrastructure changes.
 
-| Check                            | Done | Details/Notes                                                                                                                                                                                       | Comments                                                        |
-|:---------------------------------|:-----|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------------------------------------------------------|
-| **Developer Handoff/QE Kickoff** | [ ]  | Review VEP 140 design document and upstream PRs #16412, #14602. Key architectural decision: NAD ref changes are applied via migration (not in-place) because pod network annotations must be updated. | Schedule kickoff with sig-network dev lead                      |
-| **Technology Challenges**        | [x]  | Migration-based approach means network change is not instantaneous. Guest network reconfiguration (IP assignment) may need cloud-init or guest agent. Bridge-based NADs only (not SR-IOV for NAD swap). | Verify behavior with different bridge plugins                   |
-| **Test Environment Needs**       | [x]  | Multi-node cluster (minimum 2 schedulable nodes). Multus CNI with bridge plugin. Multiple bridge-based NADs with different configurations.                                                          |                                                                 |
-| **API Extensions**               | [x]  | No new API fields. Existing `spec.networks[].multus.networkName` field is now live-updatable when feature gate is enabled. `LiveUpdateNADRef` feature gate added (Beta).                             |                                                                 |
-| **Topology Considerations**      | [x]  | Requires multi-node for migration. Single-node clusters cannot use this feature (migration target node needed).                                                                                      | SNO explicitly out of scope                                     |
+- [ ] **Testability** -- Confirmed requirements are **testable and unambiguous**.
+    - Requirements are testable: NAD reference change can be verified via API patch, migration condition observation, and network connectivity checks.
+    - Feature gate behavior is binary and verifiable.
 
+- [ ] **Acceptance Criteria** -- Ensured acceptance criteria are **defined clearly** (clear user stories; D/S requirements clearly defined in Jira).
+    - Acceptance criteria derived from VEP 140: NAD reference change on running VM triggers live migration, VM connectivity established on new network, no restart required.
+    - Feature gate `LiveUpdateNADRef` controls behavior (Beta state).
+
+- [ ] **Non-Functional Requirements (NFRs)** -- Confirmed coverage for NFRs, including Performance, Security, Usability, Downtime, Connectivity, Monitoring (alerts/metrics), Scalability, Portability (e.g., cloud support), and Docs.
+    - Performance: Migration latency during NAD swap should be within standard live migration bounds.
+    - Monitoring: MigrationRequired condition provides observability of the NAD swap process.
+    - Docs: CNV-72336 tracks downstream documentation.
+
+#### **2. Known Limitations**
+
+- Feature is not tested with Multus Dynamic Networks Controller (as noted in PR #16412).
+- Feature gate `LiveUpdateNADRef` is at Beta maturity; it is enabled by default but may be disabled.
+- Only secondary (Multus) network interfaces support NAD reference live update; the pod network (default) interface does not support NAD swapping.
+- SR-IOV interfaces trigger immediate migration (no grace period), which may differ from bridge-based behavior.
+- The feature was at risk due to upstream freeze (per Jira comment) and a discovered bug blocking the HCO feature gate (resolved as of 2026/04/30).
+
+#### **3. Technology and Design Review**
+
+- [ ] **Developer Handoff/QE Kickoff** -- A meeting where Dev/Arch walked QE through the design, architecture, and implementation details. **Critical for identifying untestable aspects early.**
+    - VEP 140 documents the architecture: VM controller detects NAD name change, migration evaluator triggers auto-migration, syncNetworks updates VMI spec post-migration.
+
+- [ ] **Technology Challenges** -- Identified potential testing challenges related to the underlying technology.
+    - Requires multi-node cluster with Multus CNI and bridge plugin for bridge-based NAD testing.
+    - Migration must complete successfully for the NAD change to take effect; migration failures leave the VM on the old network.
+    - Grace period logic in migration evaluator (`DynamicNetworkControllerGracePeriod`) affects timing of migration triggers.
+
+- [ ] **Test Environment Needs** -- Determined necessary **test environment setups and tools**.
+    - Minimum 2 schedulable nodes for live migration.
+    - Multiple bridge-based NADs on different bridges/VLANs.
+    - LiveUpdateNADRef feature gate must be configurable (enable/disable).
+
+- [ ] **API Extensions** -- Reviewed new or modified APIs and their impact on testing.
+    - No new API fields; existing `spec.template.spec.networks[].multus.networkName` field is used.
+    - New feature gate `LiveUpdateNADRef` added to KubeVirt configuration.
+    - VM rollout strategy `LiveUpdate` and workload update method `LiveMigrate` required.
+
+- [ ] **Topology Considerations** -- Evaluated multi-cluster, network topology, and architectural impacts.
+    - Single cluster topology sufficient for testing.
+    - Network topology requires separate bridges/VLANs for source and target NADs.
 
 ### **II. Software Test Plan (STP)**
 
+This STP serves as the **overall roadmap for testing**, detailing the scope, approach, resources, and schedule.
+
 #### **1. Scope of Testing**
+
+This STP covers testing of the Live Update NAD Reference feature, which allows changing the NAD reference on a running VM's secondary network interface without restart. Testing validates the feature gate behavior, auto-migration trigger, network connectivity after swap, interface property preservation, and integration with existing hotplug operations.
 
 **Testing Goals**
 
-- **[P0]** Verify NAD reference change on a running VM triggers live migration and establishes connectivity on the new network (core feature validation)
-- **[P0]** Verify `RestartRequired` condition is NOT set when NAD reference changes with `LiveUpdateNADRef` feature gate enabled
-- **[P0]** Verify VM interface name and MAC address are preserved after NAD reference live update
-- **[P0]** Verify feature gate behavior: `LiveUpdateNADRef` disabled causes `RestartRequired` condition instead of migration
-- **[P1]** Verify multiple NAD references can be updated simultaneously on a VM with multiple secondary interfaces
-- **[P1]** Verify NAD reference live update interacts correctly with existing NIC hotplug/hotunplug flows
-- **[P1]** Verify error handling for invalid NAD references and edge cases
-- **[P2]** Verify NAD reference live update with various network plugins and configurations
+- **[P0]** Verify NAD reference can be changed on a running VM's secondary interface without requiring restart
+- **[P0]** Verify NAD reference change triggers automatic live migration and VM establishes connectivity on the new network
+- **[P0]** Verify auto-injected pod network is preserved when secondary interface NAD reference is updated
+- **[P1]** Verify guest interface name and MAC address are preserved after NAD reference swap
+- **[P1]** Verify multiple NAD references can be updated simultaneously with single migration
+- **[P1]** Verify feature gate correctly controls restart vs. migration behavior
+- **[P1]** Verify non-NAD network field changes still require restart
+- **[P1]** Verify error handling for invalid NAD references
+- **[P2]** Verify NAD update behavior during concurrent migration
+- **[P2]** Verify integration with hotplug/unplug operations
 
 **Out of Scope (Testing Scope Exclusions)**
 
-| Out-of-Scope Item                                                       | Rationale                                                                 | PM/Lead Agreement |
-|:------------------------------------------------------------------------|:--------------------------------------------------------------------------|:------------------|
-| SR-IOV NAD reference changes                                            | Feature only supports bridge-based secondary networks for NAD swap        | [ ] Name/Date     |
-| Pod network (default) NAD changes                                       | Feature applies to secondary (Multus) networks only                       | [ ] Name/Date     |
-| Multus Dynamic Networks Controller integration                          | Explicitly noted as not tested in VEP 140 implementation                  | [ ] Name/Date     |
-| Single-node (SNO) deployments                                           | Feature requires migration, which requires multiple nodes                 | [ ] Name/Date     |
-| Guest-internal network reconfiguration (DHCP/cloud-init)                | Guest IP assignment is an application-level concern, not a KubeVirt concern | [ ] Name/Date     |
+- [ ] **Multus CNI bridge plugin functionality** -- Platform-level: bridge creation and CNI attachment tested by network platform team. [ ] PM/Lead Agreement
+- [ ] **Multus Dynamic Networks Controller integration** -- Explicitly not tested per VEP 140 implementation notes. [ ] PM/Lead Agreement
+- [ ] **SR-IOV NAD reference live update** -- SR-IOV uses immediate migration path; separate testing scope. [ ] PM/Lead Agreement
+- [ ] **Performance benchmarking of migration latency** -- Migration performance is tracked separately by the migration team. [ ] PM/Lead Agreement
 
 #### **2. Test Strategy**
 
-| Item                           | Description                                                                                                                           | Applicable (Y/N or N/A) | Comments                                                              |
-|:-------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------|:------------------------|:----------------------------------------------------------------------|
-| Functional Testing             | Validates NAD ref live update triggers migration and connectivity                                                                     | Y                       | Core test scenarios                                                   |
-| Automation Testing             | All test cases automated in upstream (kubevirt/kubevirt) and downstream (openshift-virtualization-tests)                               | Y                       | Tier 1 upstream, Tier 2 downstream                                    |
-| Performance Testing            | Migration completion time with NAD ref changes                                                                                        | N/A                     | Standard migration performance; no feature-specific perf requirements |
-| Security Testing               | RBAC for VM spec patching                                                                                                             | N/A                     | Uses existing VM edit permissions; no new RBAC surfaces               |
-| Usability Testing              | No UI changes in scope for this epic                                                                                                  | N/A                     | UI covered by CNV-82742 (separate epic)                               |
-| Compatibility Testing          | Bridge-based NADs with different configurations                                                                                       | Y                       | Multiple bridge plugins                                               |
-| Regression Testing             | Existing hotplug/hotunplug flows, link state management                                                                               | Y                       | Must not break existing network hotplug                               |
-| Upgrade Testing                | Feature gate transition across upgrades                                                                                               | Y                       | Verify feature gate preserved after upgrade                           |
-| Backward Compatibility Testing | VMs created before feature gate enabled                                                                                               | Y                       | Verify no impact on existing VMs                                      |
-| Dependencies                   | Multus CNI, bridge CNI plugin, KubeVirt virt-controller, virt-handler                                                                 | Y                       | Standard CNV network stack                                            |
-| Cross Integrations             | NIC hotplug/hotunplug, link state management, live migration                                                                          | Y                       | Feature builds on existing network hotplug infrastructure             |
-| Monitoring                     | Standard VMI conditions: `MigrationRequired`, `RestartRequired`                                                                       | Y                       | No new metrics/alerts                                                 |
-| Cloud Testing                  | Not applicable - feature requires bridge-based secondary networks                                                                     | N/A                     | Bridge-based NADs not typical in cloud environments                   |
+**Functional**
+
+- [x] **Functional Testing** -- Validates NAD reference update, restart/migration behavior, feature gate control, interface property preservation, and error handling. Applicable: Y
+- [x] **Automation Testing** -- All test cases will be automated as Ginkgo e2e tests (Tier 1) and pytest tests (Tier 2). Applicable: Y
+- [x] **Regression Testing** -- Verifies that NAD reference changes do not break existing hotplug, hotunplug, or link state management features. Applicable: Y
+
+**Non-Functional**
+
+- [ ] **Performance Testing** -- Migration latency during NAD swap is expected to match standard live migration. No dedicated perf tests planned. Applicable: N/A
+- [ ] **Scale Testing** -- Multi-interface NAD swap covered but large-scale (100+ VMs) not in scope. Applicable: N/A
+- [ ] **Security Testing** -- No new RBAC or auth changes; existing VM edit permissions apply. Applicable: N/A
+- [ ] **Usability Testing** -- No UI changes in this epic (UI tracked separately under CNV-82742). Applicable: N/A
+- [ ] **Monitoring** -- MigrationRequired condition provides observability; no new metrics or alerts introduced. Applicable: N/A
+
+**Integration & Compatibility**
+
+- [x] **Compatibility Testing** -- Feature gate behavior validated in both enabled and disabled states. Applicable: Y
+- [ ] **Upgrade Testing** -- Feature gate is Beta (enabled by default); upgrade path does not require special handling. Applicable: N/A
+- [x] **Dependencies** -- Depends on Multus CNI for secondary network attachment. Bridge plugin required for bridge-based NADs. Applicable: Y
+- [x] **Cross Integrations** -- Integration with hotplug/unplug operations and existing live migration infrastructure. Applicable: Y
+
+**Infrastructure**
+
+- [ ] **Cloud Testing** -- Feature uses standard bridge-based networking; no cloud-specific considerations. Applicable: N/A
 
 #### **3. Test Environment**
 
-| Environment Component                         | Configuration                                                                   |
-|:----------------------------------------------|:--------------------------------------------------------------------------------|
-| **Cluster Topology**                          | Multi-node: 3-master / 2+ worker bare-metal                                    |
-| **OCP & OpenShift Virtualization Version(s)** | OCP 4.22 with OpenShift Virtualization 4.22                                     |
-| **CPU Virtualization**                        | Nodes with VT-x (Intel) or AMD-V (AMD) enabled                                 |
-| **Compute Resources**                         | Minimum per worker node: 8 vCPUs, 32GB RAM                                     |
-| **Special Hardware**                          | N/A                                                                             |
-| **Storage**                                   | Default StorageClass (ocs-storagecluster-ceph-rbd or hostpath-csi)              |
-| **Network**                                   | OVN-Kubernetes (default CNI), Multus with bridge CNI plugin for secondary networks |
-| **Required Operators**                        | OpenShift Virtualization Operator                                               |
-| **Platform**                                  | Bare metal                                                                      |
-| **Special Configurations**                    | `LiveUpdateNADRef` feature gate enabled on KubeVirt CR; `VMRolloutStrategy: LiveUpdate`; `WorkloadUpdateMethod: LiveMigrate` |
+- **Cluster Topology:** Multi-node cluster with at least 2 schedulable worker nodes (required for live migration)
+- **OCP & OpenShift Virtualization Version(s):** OCP 4.22+ with OpenShift Virtualization 4.22+
+- **CPU Virtualization:** Standard (VT-x or AMD-V enabled)
+- **Compute Resources:** Minimum per worker node: 8 vCPUs, 32GB RAM
+- **Special Hardware:** None required (bridge-based networking only)
+- **Storage:** Default StorageClass with shared storage for live migration
+- **Network:** OVN-Kubernetes (default CNI), Multus CNI with bridge plugin, minimum 2 bridge-based NADs on separate bridges
+- **Required Operators:** OpenShift Virtualization Operator, HyperConverged Cluster Operator
+- **Platform:** Bare metal (preferred for bridge networking) or cloud with bridge support
+- **Special Configurations:** LiveUpdateNADRef feature gate enabled; VMRolloutStrategy set to LiveUpdate; WorkloadUpdateMethods includes LiveMigrate
 
 #### **3.1. Testing Tools & Frameworks**
 
-| Category           | Tools/Frameworks                                                  |
-|:-------------------|:------------------------------------------------------------------|
-| **Test Framework** | Tier 1: Ginkgo/Gomega (upstream kubevirt); Tier 2: pytest (downstream openshift-virtualization-tests) |
-| **CI/CD**          | Standard Prow CI lanes                                            |
-| **Other Tools**    | virtctl, oc, kubectl                                              |
+No new or special tools required beyond standard testing infrastructure.
 
 #### **4. Entry Criteria**
 
-The following conditions must be met before testing can begin:
-
-- [x] VEP 140 design document approved and merged
-- [x] Core implementation PR merged ([kubevirt/kubevirt#16412](https://github.com/kubevirt/kubevirt/pull/16412))
-- [x] `LiveUpdateNADRef` feature gate registered (Beta status)
-- [ ] HCO feature gate opened for downstream testing
-- [ ] Test environment with multi-node cluster and Multus bridge plugin available
-- [ ] Upstream e2e tests passing in CI
+- [ ] Requirements and design documents are **approved and merged** (VEP 140 merged)
+- [ ] Test environment can be **set up and configured** with multi-node cluster and Multus bridge NADs
+- [ ] LiveUpdateNADRef feature gate is available and configurable in HCO/KubeVirt configuration
+- [ ] Core implementation PRs merged upstream (PR #16412, PR #17315)
 
 #### **5. Risks**
 
-| Risk Category        | Specific Risk for This Feature                                                                                                         | Mitigation Strategy                                                                         | Status |
-|:---------------------|:---------------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------|:-------|
-| Timeline/Schedule    | Test automation not finalized yet (per Jira status update 2026-06-01); HCO feature gate was blocked by discovered bug                   | Prioritize P0 scenarios, coordinate with dev on HCO gate status                             | [ ]    |
-| Test Coverage        | Migration-based NAD swap behavior under network instability not easily testable                                                         | Focus on functional correctness; document untestable edge cases                             | [ ]    |
-| Test Environment     | Requires multi-node cluster with specific Multus bridge configuration                                                                   | Use standard QE lab environment with pre-configured bridge NADs                             | [ ]    |
-| Untestable Aspects   | Multus Dynamic Networks Controller interaction (explicitly out of scope per implementation PR)                                           | Document as known limitation; test only with standard Multus                                | [ ]    |
-| Dependencies         | Feature gate in HCO must be opened; was delayed due to discovered bug (per 2026-04-13 Jira comment)                                     | Monitor HCO status; test upstream with feature gate enabled directly on KubeVirt CR         | [ ]    |
-| Regression           | Changes to `IsRestartRequired` and `syncVMIInterfaces` may affect existing hotplug/hotunplug and link state management flows             | Run full network regression suite; LSP analysis confirms callers at `syncRestartRequired` and `VMController.Sync` | [ ]    |
+- [ ] **Timeline/Schedule**
+    - Risk: Feature gate was at risk due to upstream freeze and HCO bug blocking enablement
+    - Mitigation: Bug resolved (GREEN status as of 2026/04/30); prioritize P0 scenarios first
+    - Status: [ ]
 
-#### **6. Known Limitations**
+- [ ] **Test Coverage**
+    - Risk: Multus Dynamic Networks Controller integration not tested
+    - Mitigation: Document as known limitation; test with standard Multus bridge plugin
+    - Status: [ ]
 
-- Feature only supports bridge-based secondary networks (not SR-IOV) for NAD reference live update
-- NAD swap triggers a live migration, introducing a brief period of network reconfiguration on the guest side
-- Pod network (default) cannot be changed via this mechanism
-- Guest IP reconfiguration after NAD swap is the responsibility of guest-side tooling (cloud-init, NetworkManager, etc.)
-- Not tested with Multus Dynamic Networks Controller
-- Single-node (SNO) clusters cannot use this feature (requires migration target node)
+- [ ] **Test Environment**
+    - Risk: Requires multi-node cluster with specific bridge networking configuration
+    - Mitigation: Use standard CI cluster topology with bridge NADs; document setup requirements
+    - Status: [ ]
+
+- [ ] **Untestable Aspects**
+    - Risk: Cannot test production-scale VLAN changes across large VM fleets
+    - Mitigation: Test with representative scenarios (single VM, multi-interface); document scale limitation
+    - Status: [ ]
+
+- [ ] **Resource Constraints**
+    - Risk: Feature spans network controller, migration evaluator, and VM controller components
+    - Mitigation: Focus automation on critical paths; leverage existing e2e test patterns
+    - Status: [ ]
+
+- [ ] **Dependencies**
+    - Risk: Depends on Multus CNI and bridge plugin availability in test environment
+    - Mitigation: Use standard OpenShift networking stack; bridge plugin is widely available
+    - Status: [ ]
+
+- [ ] **Other**
+    - Risk: SR-IOV NAD swap uses different migration path (immediate vs. pending) and may require separate testing
+    - Mitigation: Document SR-IOV as out of scope for initial release; track separately
+    - Status: [ ]
 
 ---
 
 ### **III. Test Scenarios & Traceability**
 
-| Requirement ID | Requirement Summary                                                                                | Test Scenario(s)                                                                   | Tier   | Priority |
-|:---------------|:---------------------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------|:-------|:---------|
-| CNV-72329      | NAD reference can be live-updated on a running VM's secondary network interface                     | Verify NAD reference change triggers live migration                                | Tier 1 | P0       |
-|                |                                                                                                    | Verify VM connectivity on new network after NAD swap                               | Tier 1 | P0       |
-|                |                                                                                                    | Verify interface name and MAC preserved after NAD swap                             | Tier 1 | P0       |
-|                |                                                                                                    | Verify error when target NAD does not exist                                        | Tier 1 | P1       |
-|                |                                                                                                    | Verify NAD swap with network connectivity end-to-end                               | Tier 2 | P0       |
-| CNV-72329      | RestartRequired condition behavior depends on LiveUpdateNADRef feature gate state                  | Verify RestartRequired NOT set when feature gate enabled                           | Tier 1 | P0       |
-|                |                                                                                                    | Verify RestartRequired IS set when feature gate disabled                           | Tier 1 | P0       |
-|                |                                                                                                    | Verify VMI spec retains old NAD when feature gate disabled                         | Tier 1 | P1       |
-| CNV-72329      | Multiple NAD references can be updated simultaneously on a multi-interface VM                      | Verify simultaneous update of multiple NAD references triggers single migration    | Tier 1 | P1       |
-|                |                                                                                                    | Verify partial NAD update (some interfaces changed, others unchanged)              | Tier 1 | P1       |
-|                |                                                                                                    | Verify multi-interface NAD swap end-to-end connectivity                            | Tier 2 | P1       |
-| CNV-72329      | NAD live update does not interfere with existing NIC hotplug/hotunplug and link state management   | Verify NIC hotplug still works after NAD reference change                          | Tier 1 | P1       |
-|                |                                                                                                    | Verify NIC hotunplug still works after NAD reference change                        | Tier 1 | P1       |
-|                |                                                                                                    | Verify interface link state changes still work after NAD swap                      | Tier 1 | P1       |
-|                |                                                                                                    | Verify NAD swap during ongoing NIC hotplug operation                               | Tier 2 | P2       |
-| CNV-72329      | Migration evaluator correctly detects NAD name mismatch and triggers migration                     | Verify migration condition set when VMI NAD differs from pod network status        | Tier 1 | P0       |
-|                |                                                                                                    | Verify migration condition cleared after successful migration                      | Tier 1 | P1       |
-|                |                                                                                                    | Verify NAD comparison handles namespace-qualified and unqualified names            | Tier 1 | P1       |
-| CNV-72329      | VM controller syncs NAD references from VM spec to VMI spec when feature gate is enabled           | Verify VMI spec networks updated to match VM spec after NAD change                 | Tier 1 | P0       |
-|                |                                                                                                    | Verify pod network (default) is not affected by NAD sync logic                     | Tier 1 | P1       |
-| CNV-72329      | [NEGATIVE] Invalid and edge-case NAD reference changes are handled gracefully                      | Verify behavior when changing NAD to same value (no-op)                            | Tier 1 | P2       |
-|                |                                                                                                    | Verify behavior when migration target node unavailable                             | Tier 2 | P2       |
-|                |                                                                                                    | Verify NAD swap with VM that has no secondary interfaces                           | Tier 1 | P2       |
+- **Requirement ID:** CNV-72329
+  **Requirement Summary:** NAD reference can be changed on a running VM's secondary network interface without requiring VM restart
+  **Test Scenario(s):**
+    - Verify NAD reference update on running VM without restart
+    - Verify VM remains running during NAD reference change
+    - Verify RestartRequired condition not set after NAD change
+  **Tier:** Tier 1
+  **Priority:** P0
+
+- **Requirement ID:**
+  **Requirement Summary:** NAD reference change triggers automatic live migration to apply the new network attachment
+  **Test Scenario(s):**
+    - Verify auto-migration triggered after NAD reference change
+    - Verify MigrationRequired condition appears and resolves
+    - Verify VM lands on different node after migration
+  **Tier:** Tier 1
+  **Priority:** P0
+
+- **Requirement ID:**
+  **Requirement Summary:** VM network connectivity is established on the new network after NAD reference live update completes
+  **Test Scenario(s):**
+    - Verify VM connectivity on new network after NAD swap
+    - Verify VM unreachable on old network after NAD swap
+  **Tier:** Tier 2
+  **Priority:** P0
+
+- **Requirement ID:**
+  **Requirement Summary:** Guest interface name and MAC address are preserved after NAD reference live update
+  **Test Scenario(s):**
+    - Verify guest interface name preserved after NAD swap
+    - Verify MAC address unchanged after NAD swap
+  **Tier:** Tier 1
+  **Priority:** P1
+
+- **Requirement ID:**
+  **Requirement Summary:** Multiple NAD references can be updated simultaneously on a VM with multiple secondary interfaces
+  **Test Scenario(s):**
+    - Verify simultaneous NAD updates on multiple interfaces
+    - Verify single migration for multiple NAD changes
+    - Verify all interfaces connect to new networks
+  **Tier:** Tier 2
+  **Priority:** P1
+
+- **Requirement ID:**
+  **Requirement Summary:** Auto-injected pod network is preserved when NAD reference live update is performed on secondary interfaces
+  **Test Scenario(s):**
+    - Verify pod network preserved during secondary NAD update
+    - Verify pod network connectivity after NAD swap
+  **Tier:** Tier 1 / Tier 2
+  **Priority:** P0
+
+- **Requirement ID:**
+  **Requirement Summary:** LiveUpdateNADRef feature gate controls whether NAD reference changes trigger restart or live migration
+  **Test Scenario(s):**
+    - Verify NAD change requires restart when gate disabled
+    - Verify NAD change triggers migration when gate enabled
+  **Tier:** Tier 1
+  **Priority:** P1
+
+- **Requirement ID:**
+  **Requirement Summary:** Non-NAD network field changes still require VM restart even when LiveUpdateNADRef is enabled
+  **Test Scenario(s):**
+    - Verify non-NAD network change still requires restart
+    - Verify interface binding change requires restart
+  **Tier:** Tier 1
+  **Priority:** P1
+
+- **Requirement ID:**
+  **Requirement Summary:** NAD reference live update works correctly with VM rollout strategy set to LiveUpdate
+  **Test Scenario(s):**
+    - Verify NAD update with LiveUpdate rollout strategy
+  **Tier:** Tier 1
+  **Priority:** P1
+
+- **Requirement ID:**
+  **Requirement Summary:** [NEGATIVE] NAD reference change to a non-existent NAD is handled gracefully
+  **Test Scenario(s):**
+    - Verify error handling for non-existent target NAD
+    - Verify VM stability after invalid NAD reference
+  **Tier:** Tier 1
+  **Priority:** P1
+
+- **Requirement ID:**
+  **Requirement Summary:** [NEGATIVE] NAD reference live update behavior during an ongoing migration
+  **Test Scenario(s):**
+    - Verify NAD update behavior during active migration
+  **Tier:** Tier 2
+  **Priority:** P2
+
+- **Requirement ID:**
+  **Requirement Summary:** NAD reference live update integrates correctly with existing hotplug/unplug operations
+  **Test Scenario(s):**
+    - Verify NAD swap after interface hotplug
+    - Verify interface hotplug after NAD swap
+  **Tier:** Tier 2
+  **Priority:** P1
 
 ---
 
@@ -195,8 +303,8 @@ The following conditions must be met before testing can begin:
 This Software Test Plan requires approval from the following stakeholders:
 
 * **Reviewers:**
-  - [QE Reviewer / @github-username]
-  - [sig-network QE Lead / @github-username]
+  - [Name / @github-username]
+  - [Name / @github-username]
 * **Approvers:**
-  - [QE Lead / @github-username]
-  - [Product Manager / @github-username]
+  - [Name / @github-username]
+  - [Name / @github-username]
