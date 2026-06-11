@@ -449,3 +449,94 @@ jobs:
           agent: go-test-generator
           version: latest
           target-repo: ${{ github.workspace }}/pr-repo
+
+      - name: Restore PR checkout (post-Stage 3)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
+          HEAD_REF="${{ steps.pr-info.outputs.head_ref }}"
+          if [[ ! -d "${PR_REPO}/.git" ]]; then
+            echo "::notice::PR repo was cleaned up by FullSend, re-cloning..."
+            rm -rf "${PR_REPO}"
+            git clone --depth 1 --branch "${HEAD_REF}" \
+              "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" \
+              "${PR_REPO}"
+          else
+            git -C "${PR_REPO}" remote set-url origin \
+              "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+            git -C "${PR_REPO}" fetch origin "${HEAD_REF}"
+            git -C "${PR_REPO}" reset --hard "origin/${HEAD_REF}"
+          fi
+          echo "::notice::PR repo HEAD: $(git -C "${PR_REPO}" log --oneline -1)"
+
+      - name: Refresh GCP credentials (Stage 4)
+        uses: ./.defaults/.github/actions/setup-gcp
+        with:
+          gcp_wif_provider: ${{ secrets.FULLSEND_GCP_WIF_PROVIDER }}
+          gcp_project_id: ${{ secrets.FULLSEND_GCP_PROJECT_ID }}
+
+      - name: Patch GCP credentials (Stage 4)
+        run: bash /tmp/patch-gcp-creds.sh
+
+      - name: Re-inject CLAUDE.md for Stage 4
+        env:
+          JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
+        run: |
+          cat > "${{ github.workspace }}/pr-repo/CLAUDE.md" << 'AGENT_EOF'
+          # QualityFlow Agent — Output Preservation
+
+          CRITICAL REQUIREMENT: Before finishing your task, you MUST push all
+          generated output files to the PR branch. The sandbox file extraction
+          channel is unreliable and output will be lost if you skip this step.
+
+          After writing all output files to $FULLSEND_OUTPUT_DIR, run these
+          commands to push them to the PR branch:
+
+          ```bash
+          # Copy output to target repo
+          DEST="$FULLSEND_TARGET_REPO_DIR/outputs"
+          cd "$FULLSEND_TARGET_REPO_DIR"
+          git config user.email "qualityflow[bot]@users.noreply.github.com"
+          git config user.name "QualityFlow"
+
+          # Derive repo and branch from git state
+          REMOTE_URL=$(git remote get-url origin)
+          REPO_NAME=$(echo "$REMOTE_URL" | sed -n 's|.*github\.com[:/]\(.*\)\.git|\1|p')
+          BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+          # Authenticate and push
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO_NAME}.git"
+          git add outputs/
+          git commit -m "Add QualityFlow output for $JIRA_TICKET [skip ci]" || true
+          git push origin "HEAD:$BRANCH" || echo "Push failed — output available in sandbox artifacts"
+          ```
+
+          This is MANDATORY. Do not consider your task complete until you have
+          attempted the git push.
+          AGENT_EOF
+          echo "::notice::Re-injected CLAUDE.md for Stage 4"
+
+      - name: "QF Stage 4: Python Test Generator"
+        id: stage4
+        continue-on-error: true
+        uses: ./.defaults/
+        env:
+          PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
+          REPO_FULL_NAME: ${{ github.repository }}
+          TARGET_BRANCH: ${{ steps.pr-info.outputs.head_ref }}
+          TRIGGER_SOURCE: slash-command
+          JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PUSH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PRE_AGENT_HEAD: ${{ steps.pre-head.outputs.sha }}
+          PR_CHECKOUT_PATH: ${{ github.workspace }}/pr-repo
+          SOURCE_REPO_PATH: ${{ github.workspace }}/pr-repo
+          GCP_OIDC_TOKEN_FILE: ""
+          FULLSEND_GCP_OIDC_URL: ""
+          FULLSEND_GCP_OIDC_AUTH_FILE: ""
+        with:
+          agent: python-test-generator
+          version: latest
+          target-repo: ${{ github.workspace }}/pr-repo
