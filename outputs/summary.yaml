@@ -1,0 +1,30 @@
+status: success
+jira_id: CNV-72329
+file_path: /sandbox/workspace/output/CNV-72329_test_plan.md
+feature: "Support changing the VM attached network NAD ref using hotplug"
+component: "CNV Network"
+sig: "sig-network"
+feature_gate: "LiveUpdateNADRef (Beta)"
+primary_pr: "https://github.com/kubevirt/kubevirt/pull/16412"
+bug_fix_pr: "https://github.com/kubevirt/kubevirt/pull/17373"
+test_counts:
+  tier1: 6
+  tier2: 7
+  total: 13
+priority_breakdown:
+  p0: 5
+  p1: 6
+  p2: 2
+lsp_analysis: true
+files_analyzed:
+  - pkg/network/controllers/vm.go
+  - pkg/network/migration/evaluator.go
+  - pkg/network/vmliveupdate/restart.go
+  - pkg/virt-config/feature-gates.go
+  - pkg/virt-config/featuregate/active.go
+  - tests/network/nad_live_update.go
+regression_areas:
+  - "VM Controller Sync - syncNetworks NAD reference propagation"
+  - "Migration Evaluator - NAD name comparison for auto-migration"
+  - "Live Update Restart Logic - NAD-only change predicates"
+  - "Pod Network Preservation - auto-injected network handling"
