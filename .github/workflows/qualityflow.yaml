@@ -285,58 +285,42 @@ jobs:
           version: latest
           target-repo: ${{ github.workspace }}/pr-repo
 
-      - name: Recover STD output from artifact
-        if: steps.stage2.outcome == 'failure'
+      - name: Stage handoff — sync STD output
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
         run: |
           set -euo pipefail
-          echo "::warning::Stage 2 failed (likely sandbox extraction). Recovering output from artifact..."
-          gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" \
-            --name fullsend-std-builder --dir /tmp/std-artifact 2>/dev/null || true
-          STD_FILE=$(find /tmp/std-artifact -name "${JIRA_TICKET}_test_description.yaml" -type f 2>/dev/null | head -1)
+          DEST="${GITHUB_WORKSPACE}/pr-repo/outputs/std/${JIRA_TICKET}"
+
+          # Source 1: FullSend extraction (works if sandbox gRPC was alive)
+          STD_FILE=$(find "${GITHUB_WORKSPACE}/output" -name "${JIRA_TICKET}_test_description.yaml" -type f 2>/dev/null | head -1)
           if [[ -n "${STD_FILE}" ]]; then
-            DEST="${GITHUB_WORKSPACE}/pr-repo/outputs/std/${JIRA_TICKET}"
-            mkdir -p "${DEST}"
+            mkdir -p "${DEST}" "${DEST}/go-tests" "${DEST}/python-tests"
             cp "${STD_FILE}" "${DEST}/"
-            for stub in $(find /tmp/std-artifact -name "*_stubs_test.go" -o -name "test_*_stubs.py" 2>/dev/null); do
+            for stub in $(find "${GITHUB_WORKSPACE}/output" -name "*_stubs_test.go" -o -name "test_*_stubs.py" 2>/dev/null); do
               if [[ "${stub}" == *_test.go ]]; then
-                mkdir -p "${DEST}/go-tests"
                 cp "${stub}" "${DEST}/go-tests/"
               else
-                mkdir -p "${DEST}/python-tests"
                 cp "${stub}" "${DEST}/python-tests/"
               fi
             done
-            echo "::notice::Recovered STD from artifact to ${DEST}/"
-          else
-            echo "::error::Could not recover STD output from artifact"
-            exit 1
+            echo "::notice::STD recovered from FullSend extraction"
           fi
 
-      - name: Stage handoff — copy STD output into PR repo
-        if: steps.stage2.outcome == 'success'
-        env:
-          JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
-        run: |
-          set -euo pipefail
-          STD_FILE=$(find "${GITHUB_WORKSPACE}/output" -name "${JIRA_TICKET}_test_description.yaml" -type f | head -1)
-          if [[ -n "${STD_FILE}" ]]; then
-            DEST="${GITHUB_WORKSPACE}/pr-repo/outputs/std/${JIRA_TICKET}"
-            mkdir -p "${DEST}"
-            cp "${STD_FILE}" "${DEST}/"
-            echo "::notice::Copied STD to ${DEST}/"
+          # Source 2: Agent pushed to PR branch (bypasses gRPC via HTTP)
+          if [[ ! -f "${DEST}/${JIRA_TICKET}_test_description.yaml" ]]; then
+            echo "::notice::Checking PR branch for agent-pushed output..."
+            git -C "${GITHUB_WORKSPACE}/pr-repo" pull origin "${{ steps.pr-info.outputs.head_ref }}" --rebase 2>/dev/null || true
           fi
-          for stub in $(find "${GITHUB_WORKSPACE}/output" -name "*_stubs_test.go" -o -name "test_*_stubs.py" 2>/dev/null); do
-            if [[ "${stub}" == *_test.go ]]; then
-              mkdir -p "${DEST}/go-tests"
-              cp "${stub}" "${DEST}/go-tests/"
-            else
-              mkdir -p "${DEST}/python-tests"
-              cp "${stub}" "${DEST}/python-tests/"
-            fi
-          done
+
+          # Verify
+          if [[ -f "${DEST}/${JIRA_TICKET}_test_description.yaml" ]]; then
+            echo "::notice::STD output available at ${DEST}/"
+          else
+            echo "::error::No STD output found from any source"
+            exit 1
+          fi
 
       - name: Refresh GCP credentials (Stage 3)
         uses: ./.defaults/.github/actions/setup-gcp

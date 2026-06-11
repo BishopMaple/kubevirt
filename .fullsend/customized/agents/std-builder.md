@@ -96,3 +96,27 @@ stubs:
   go: <count or 0>
   python: <count or 0>
 ```
+
+### Step 5: Push Output to PR Branch
+
+Copy output files to the target repo and push. This ensures output is
+preserved even if sandbox file extraction fails.
+
+```bash
+DEST="$FULLSEND_TARGET_REPO_DIR/outputs/std/$JIRA_TICKET"
+mkdir -p "$DEST" "$DEST/go-tests" "$DEST/python-tests"
+cp "$FULLSEND_OUTPUT_DIR/${JIRA_TICKET}_test_description.yaml" "$DEST/" 2>/dev/null || true
+cp "$FULLSEND_OUTPUT_DIR/go-tests/"*_stubs_test.go "$DEST/go-tests/" 2>/dev/null || true
+cp "$FULLSEND_OUTPUT_DIR/python-tests/"test_*_stubs.py "$DEST/python-tests/" 2>/dev/null || true
+cp "$FULLSEND_OUTPUT_DIR/summary.yaml" "$DEST/" 2>/dev/null || true
+cd "$FULLSEND_TARGET_REPO_DIR"
+git config user.email "qualityflow[bot]@users.noreply.github.com"
+git config user.name "QualityFlow"
+git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO_FULL_NAME}.git"
+git add "outputs/std/$JIRA_TICKET/"
+git commit -m "Add STD output for $JIRA_TICKET [skip ci]" || true
+git push origin "HEAD:$TARGET_BRANCH" || echo "Push failed — output available in sandbox artifacts"
+```
+
+If git push fails, do not treat it as a fatal error. The output files in
+`$FULLSEND_OUTPUT_DIR` will be extracted by FullSend as a fallback.

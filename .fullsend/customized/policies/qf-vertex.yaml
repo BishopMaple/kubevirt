@@ -1,6 +1,6 @@
 version: 1
 
-# Sandbox policy for agents that only need Claude inference (no external APIs).
+# Sandbox policy for agents that need Claude inference + GitHub push.
 # Used by: std-builder, std-reviewer, std-refiner
 
 filesystem_policy:
@@ -30,6 +30,23 @@ network_policies:
     binaries:
       - path: "**/claude"
       - path: "**/node"
+  github:
+    name: github
+    endpoints:
+      - host: "api.github.com"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+      - host: "github.com"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+    binaries:
+      - path: "**/gh"
+      - path: "**/git"
+
   github_oidc:
     name: github-oidc
     endpoints:

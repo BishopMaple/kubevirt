@@ -37,6 +37,8 @@ plugins:
 
 runner_env:
   JIRA_TICKET: "${JIRA_TICKET}"
+  REPO_FULL_NAME: "${REPO_FULL_NAME}"
+  TARGET_BRANCH: "${TARGET_BRANCH}"
   FULLSEND_OUTPUT_SCHEMA: ${FULLSEND_DIR}/schemas/go-test-result.schema.json
 
 timeout_minutes: 20
