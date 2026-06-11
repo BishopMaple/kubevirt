@@ -3,15 +3,9 @@ jira_id: CNV-72329
 stp_source: outputs/stp/CNV-72329/CNV-72329_test_plan.md
 std_yaml: outputs/std/CNV-72329/CNV-72329_test_description.yaml
 test_counts:
-  total: 13
-  tier1: 6
-  tier2: 7
+  total: 23
+  tier1: 19
+  tier2: 4
 stubs:
-  go: 6
-  python: 7
-generated_files:
-  - CNV-72329_test_description.yaml
-  - go-tests/nad_live_update_stubs_test.go
-  - go-tests/nad_live_update_pod_network_regression_stubs_test.go
-  - python-tests/test_nad_live_update_stubs.py
-  - python-tests/test_nad_live_update_validation_stubs.py
+  go: 19
+  python: 4
