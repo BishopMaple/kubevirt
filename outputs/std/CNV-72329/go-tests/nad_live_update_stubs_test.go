@@ -5,145 +5,110 @@ import (
 )
 
 /*
-NAD Reference Live Update Tests
+Live Update NAD Reference Tests — Core Functionality
 
 STP Reference: outputs/stp/CNV-72329/CNV-72329_test_plan.md
 Jira: CNV-72329
 */
 
-var _ = Describe("[CNV-72329] NAD Reference Live Update", decorators.SigNetwork, Serial, func() {
+var _ = Describe("[CNV-72329] Live Update NAD Reference", decorators.SigNetwork, Serial, func() {
 	/*
 	Markers:
-	    - sig-network
-	    - serial
+	    - tier1
 
 	Preconditions:
-	    - OCP 4.22+ with OpenShift Virtualization 4.22+
-	    - Multi-node cluster with minimum 2 schedulable worker nodes
-	    - Multus CNI and bridge CNI plugin available
-	    - LiveUpdateNADRef feature gate enabled (Beta state)
-	    - Shared storage (RWX) for live migration
+	    - OCP 4.22+ cluster with OVN-Kubernetes CNI
+	    - OpenShift Virtualization 4.22+ installed
+	    - Multi-node cluster with at least 2 schedulable worker nodes
+	    - Multus CNI with bridge plugin available
+	    - LiveUpdateNADRef feature gate enabled (Beta — enabled by default)
+	    - VMRolloutStrategy set to LiveUpdate
+	    - WorkloadUpdateMethods includes LiveMigrate
 	*/
 
-	Context("when NAD reference is updated on a running VM", Ordered, func() {
+	Context("NAD reference update on running VM without restart", Ordered, decorators.OncePerOrderedCleanup, func() {
 		/*
 		Preconditions:
-		    - Two bridge-type NADs (NAD-A, NAD-B) created in the test namespace
-		    - Running Fedora VM with one secondary network interface attached to NAD-A
-		    - Peer VM on NAD-B network for connectivity validation
-		*/
-
-		/*
-		Preconditions:
-		    - Two bridge-type NADs (NAD-A, NAD-B) in the test namespace
-		    - Running Fedora VM with secondary network attached to NAD-A
-		    - Peer VM on NAD-B for ping connectivity validation
+		    - Source bridge-based NAD created on br-source
+		    - Target bridge-based NAD created on br-target (different bridge)
+		    - VM created with secondary interface attached to source NAD
+		    - VM started and in Running state
+		    - VM rollout strategy set to LiveUpdate
 
 		Steps:
-		    1. Update VM spec to change secondary network NAD reference from NAD-A to NAD-B
-		    2. Wait for automatic live migration to trigger and complete
-		    3. Ping peer VM on NAD-B from the migrated VM
+		    1. Patch VM spec to change secondary network NAD reference from source-nad to target-nad
+		    2. Wait for patch to be applied
 
 		Expected:
-		    - VM has network connectivity on NAD-B post-migration (ping succeeds)
+		    - VM remains in Running phase after NAD reference is patched
+		    - RestartRequired condition is NOT set on the VM
+		    - VM spec.template.spec.networks[].multus.networkName reflects the new NAD
 		*/
-		PendingIt("[test_id:TS-CNV-72329-001] should trigger live migration and maintain network connectivity after NAD swap", func() {
+		PendingIt("[test_id:TS-CNV-72329-001] should update NAD reference without requiring VM restart", func() {
 			Skip("Phase 1: Design only - awaiting implementation")
 		})
+	})
 
+	Context("Auto-migration triggered after NAD reference change", Ordered, decorators.OncePerOrderedCleanup, func() {
 		/*
 		Preconditions:
-		    - Two bridge-type NADs (NAD-A, NAD-B) in the test namespace
-		    - Running VM with secondary network attached to NAD-A
+		    - Source and target bridge-based NADs created
+		    - VM created with secondary interface on source NAD
+		    - VM started and in Running state
+		    - Original node where VMI is running recorded
 
 		Steps:
-		    1. Update VM spec to change NAD reference from NAD-A to NAD-B
+		    1. Patch VM spec to change NAD reference from source-nad to target-nad
+		    2. Wait for auto-migration to complete
+
+		Expected:
+		    - Migration is triggered automatically after NAD reference patch
+		    - MigrationState.Completed is true on the VMI
+		    - VM lands on a different node than the original
+		*/
+		PendingIt("[test_id:TS-CNV-72329-002] should trigger auto-migration after NAD reference change", func() {
+			Skip("Phase 1: Design only - awaiting implementation")
+		})
+	})
+
+	Context("Pod network preserved during secondary NAD update", Ordered, decorators.OncePerOrderedCleanup, func() {
+		/*
+		Preconditions:
+		    - Source and target bridge-based NADs created
+		    - VM created with default (pod) network and secondary interface on source NAD
+		    - VM started and in Running state
+		    - Pod network connectivity verified (ping to cluster DNS succeeds)
+
+		Steps:
+		    1. Patch VM spec to change secondary network NAD reference to target NAD
 		    2. Wait for migration to complete
 
 		Expected:
-		    - VirtualMachineInstanceMigrationRequired condition appears after NAD reference update
-		    - Condition clears after successful migration completion
+		    - Pod network interface remains present after secondary NAD swap
+		    - Pod network connectivity (ping to cluster DNS) works after NAD swap and migration
 		*/
-		PendingIt("[test_id:TS-CNV-72329-002] should show MigrationRequired condition after NAD update and clear after migration", func() {
+		PendingIt("[test_id:TS-CNV-72329-006] should preserve pod network connectivity when secondary NAD is updated", func() {
 			Skip("Phase 1: Design only - awaiting implementation")
 		})
 	})
 
-	Context("with LiveUpdateNADRef feature gate disabled", Ordered, func() {
+	Context("NAD update with LiveUpdate rollout strategy", Ordered, decorators.OncePerOrderedCleanup, func() {
 		/*
 		Preconditions:
-		    - LiveUpdateNADRef feature gate disabled in KubeVirt CR
-		    - Two bridge-type NADs (NAD-A, NAD-B) in the test namespace
-		    - Running VM with secondary network attached to NAD-A
-		*/
-
-		/*
-		Preconditions:
-		    - KubeVirt CR configured with LiveUpdateNADRef feature gate disabled
-		    - Two bridge NADs (NAD-A, NAD-B) in the test namespace
-		    - Running VM with secondary network attached to NAD-A
+		    - Source and target bridge-based NADs created
+		    - VM created with explicit LiveUpdate rollout strategy (spec.updateStrategy.type=LiveUpdate)
+		    - VM has secondary interface attached to source NAD
+		    - VM started and in Running state
 
 		Steps:
-		    1. Update VM spec to change NAD reference from NAD-A to NAD-B
-		    2. Observe VM behavior over sustained period
-
-		Expected:
-		    - No migration is triggered
-		    - RestartRequired condition appears on the VM
-		*/
-		PendingIt("[test_id:TS-CNV-72329-003] should require VM restart when NAD reference is changed", func() {
-			Skip("Phase 1: Design only - awaiting implementation")
-		})
-	})
-
-	Context("interface identity preservation after NAD swap", Ordered, func() {
-		/*
-		Preconditions:
-		    - Two bridge NADs (NAD-A, NAD-B) in the test namespace
-		    - Running VM with secondary network attached to NAD-A
-		    - Interface name and MAC address recorded from VMI status before NAD swap
-		*/
-
-		/*
-		Preconditions:
-		    - Two bridge NADs (NAD-A, NAD-B) in the test namespace
-		    - Running VM with secondary network and known interface name and MAC address
-		    - Original interface name and MAC address recorded from VMI status
-
-		Steps:
-		    1. Update VM spec to change NAD reference from NAD-A to NAD-B
-		    2. Wait for live migration to complete
-
-		Expected:
-		    - Interface name equals pre-swap value
-		    - MAC address equals pre-swap value
-		*/
-		PendingIt("[test_id:TS-CNV-72329-004] should preserve interface name and MAC address after NAD reference live update", func() {
-			Skip("Phase 1: Design only - awaiting implementation")
-		})
-	})
-
-	Context("multiple secondary networks NAD ref update", Ordered, func() {
-		/*
-		Preconditions:
-		    - Four bridge NADs (A1, A2, B1, B2) in the test namespace
-		    - Running VM with two secondary network interfaces on A1 and A2
-		*/
-
-		/*
-		Preconditions:
-		    - Four bridge NADs (A1, A2, B1, B2) in the test namespace
-		    - Running VM with two secondary network interfaces attached to A1 and A2
-
-		Steps:
-		    1. Update both NAD references simultaneously in single patch (A1->B1, A2->B2)
+		    1. Patch VM spec to change NAD reference to target NAD
 		    2. Wait for migration to complete
 
 		Expected:
-		    - Single migration triggered for both NAD changes
-		    - Both secondary networks reference new NADs (B1 and B2) after migration
+		    - Migration is triggered with LiveUpdate rollout strategy
+		    - VMI MigrationState.Completed is true
 		*/
-		PendingIt("[test_id:TS-CNV-72329-005] should update multiple NAD references simultaneously and trigger single migration", func() {
+		PendingIt("[test_id:TS-CNV-72329-009] should successfully update NAD with LiveUpdate rollout strategy", func() {
 			Skip("Phase 1: Design only - awaiting implementation")
 		})
 	})

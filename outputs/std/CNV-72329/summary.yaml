@@ -3,9 +3,9 @@ jira_id: CNV-72329
 stp_source: outputs/stp/CNV-72329/CNV-72329_test_plan.md
 std_yaml: outputs/std/CNV-72329/CNV-72329_test_description.yaml
 test_counts:
-  total: 23
-  tier1: 19
+  total: 12
+  tier1: 8
   tier2: 4
 stubs:
-  go: 19
-  python: 4
+  go: 8
+  python: 7

@@ -1,63 +1,98 @@
 """
-NAD Reference Live Update — End-to-End Connectivity Tests
+Live Update NAD Reference — Connectivity and Multi-Interface Tests
 
 STP Reference: outputs/stp/CNV-72329/CNV-72329_test_plan.md
 Jira: CNV-72329
 """
 
 
-class TestNADSwapConnectivity:
+class TestNadLiveUpdateConnectivity:
     """
-    Tests for NAD swap with end-to-end network connectivity validation.
+    Tests for VM network connectivity after NAD reference live update.
+
+    Markers:
+        - tier2
 
     Preconditions:
-        - Source bridge NAD created
-        - Target bridge NAD created
-        - Running Fedora VM with secondary bridge interface on source NAD
-        - Peer VM on target network for connectivity validation
+        - Source bridge-based NAD with IPAM created (subnet 10.100.0.0/24)
+        - Target bridge-based NAD with IPAM created (subnet 10.200.0.0/24)
+        - VM created with secondary interface attached to source NAD
+        - VM started and in Running state with IP assigned on source network
+        - Peer VM created and running on target network
     """
 
     __test__ = False
 
-    def test_nad_swap_connectivity_end_to_end(self):
+    def test_connectivity_on_new_network_after_nad_swap(self):
         """
-        Test that NAD swap results in working connectivity on the target network.
+        Test that VM establishes connectivity on new network after NAD swap.
+
+        Steps:
+            1. Patch VM spec to change secondary network NAD reference from source to target
+            2. Wait for auto-migration to complete
+            3. Execute ping from VM to peer VM on target network
+
+        Expected:
+            - Ping from VM to peer VM on target network succeeds with 0% packet loss
+        """
+        pass
+
+    def test_unreachable_on_old_network_after_nad_swap(self):
+        """
+        Test that VM is unreachable on old network after NAD swap.
 
         Preconditions:
-            - Peer VM running and accessible on target network
+            - NAD swap and migration already completed (from previous test)
 
         Steps:
-            1. Patch VM NAD reference from source to target network
-            2. Wait for live migration to complete
-            3. Execute ping from swapped VM to peer VM on target network
+            1. Execute ping from source network to VM's old IP address
 
         Expected:
-            - Ping succeeds with 0% packet loss on target network
+            - Ping to VM's old IP on source network fails
         """
+        pass
 
 
-class TestMultiInterfaceNADSwapConnectivity:
+class TestNadLiveUpdateMultiInterface:
     """
-    Tests for multi-interface NAD swap with end-to-end connectivity validation.
+    Tests for simultaneous NAD updates on VM with multiple secondary interfaces.
+
+    Markers:
+        - tier2
 
     Preconditions:
-        - Multiple source bridge NADs created (one per secondary interface)
-        - Multiple target bridge NADs created (one per secondary interface)
-        - Running Fedora VM with multiple secondary bridge interfaces on source NADs
-        - Peer VMs on each target network for connectivity validation
+        - Four bridge-based NADs created (source-a, source-b, target-a, target-b)
+        - VM created with two secondary interfaces on source-a and source-b
+        - VM started and in Running state
     """
 
     __test__ = False
 
-    def test_multi_interface_nad_swap_connectivity(self):
+    def test_simultaneous_nad_updates_on_multiple_interfaces(self):
         """
-        Test that multi-interface NAD swap results in connectivity on all target networks.
+        Test that multiple NAD references can be updated in a single patch.
 
         Steps:
-            1. Patch all NAD references on the multi-interface VM
-            2. Wait for live migration to complete
-            3. Execute ping from swapped VM to each peer VM on target networks
+            1. Patch VM spec to change both NAD references simultaneously (source-a to target-a, source-b to target-b)
+            2. Wait for migration to complete
 
         Expected:
-            - Ping succeeds on all target networks
+            - Only one migration occurs for the batch NAD update
         """
+        pass
+
+    def test_all_interfaces_connect_to_new_networks_after_multi_nad_swap(self):
+        """
+        Test that all interfaces connect to their respective new networks after multi-NAD swap.
+
+        Preconditions:
+            - Multi-NAD swap and migration already completed (from previous test)
+
+        Steps:
+            1. Check connectivity on first interface (target-a network)
+            2. Check connectivity on second interface (target-b network)
+
+        Expected:
+            - Both secondary interfaces are connected to their respective target networks
+        """
+        pass
