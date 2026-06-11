@@ -1,0 +1,57 @@
+status: success
+jira_id: CNV-72329
+jira_summary: "Support changing the VM attached network NAD ref using hotplug"
+std_source: "outputs/std/CNV-72329/CNV-72329_test_description.yaml"
+test_files:
+  - test_live_update_nad_ref_connectivity.py
+  - test_live_update_nad_ref_multi_interface.py
+  - test_live_update_nad_ref_error_handling.py
+  - test_live_update_nad_ref_upgrade.py
+  - conftest.py
+test_count: 10
+tier2_scenarios_covered:
+  - scenario_id: "4"
+    test_id: "TS-CNV-72329-004"
+    test_function: "test_guest_connectivity_maintained_after_nad_change"
+    file: "test_live_update_nad_ref_connectivity.py"
+  - scenario_id: "5"
+    test_id: "TS-CNV-72329-005"
+    test_function: "test_vm_communicates_on_new_vlan_after_nad_change"
+    file: "test_live_update_nad_ref_connectivity.py"
+  - scenario_id: "10"
+    test_id: "TS-CNV-72329-010"
+    test_function: "test_nad_change_does_not_affect_other_interfaces"
+    file: "test_live_update_nad_ref_multi_interface.py"
+  - scenario_id: "11"
+    test_id: "TS-CNV-72329-011"
+    test_function: "test_nad_change_with_bridge_binding_interface"
+    file: "test_live_update_nad_ref_connectivity.py"
+  - scenario_id: "12"
+    test_id: "TS-CNV-72329-012"
+    test_function: "test_nad_change_after_hotplug"
+    file: "test_live_update_nad_ref_multi_interface.py"
+  - scenario_id: "13"
+    test_id: "TS-CNV-72329-013"
+    test_function: "test_nad_change_rejected_for_absent_interface"
+    file: "test_live_update_nad_ref_multi_interface.py"
+  - scenario_id: "16"
+    test_id: "TS-CNV-72329-016"
+    test_function: "test_existing_vms_work_after_fg_enablement"
+    file: "test_live_update_nad_ref_upgrade.py"
+  - scenario_id: "17"
+    test_id: "TS-CNV-72329-017"
+    test_function: "test_invalid_nad_reference_handled_gracefully"
+    file: "test_live_update_nad_ref_error_handling.py"
+  - scenario_id: "18"
+    test_id: "TS-CNV-72329-018"
+    test_function: "test_nad_change_during_in_progress_migration"
+    file: "test_live_update_nad_ref_error_handling.py"
+  - scenario_id: "19"
+    test_id: "TS-CNV-72329-019"
+    test_function: "test_nad_change_does_not_interfere_with_disk_hotplug"
+    file: "test_live_update_nad_ref_error_handling.py"
+lsp_patterns_used: false
+conftest_generated: true
+pattern_library_used: true
+pattern_template: "network_connectivity"
+generated_date: "2026-06-11"
