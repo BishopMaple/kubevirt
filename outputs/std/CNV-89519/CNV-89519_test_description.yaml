@@ -1,0 +1,1424 @@
+---
+# Software Test Description (STD) — CNV-89519
+# VMI Domain Reconciliation During virt-handler Rolling Update
+# Generated: 2026-06-11
+
+document_metadata:
+  std_version: "2.1-enhanced"
+  generated_date: "2026-06-11"
+  jira_issue: "CNV-89519"
+  jira_summary: "VMI Domain Reconciliation During virt-handler Rolling Update"
+  source_bugs:
+    - "CNV-89519"
+  stp_reference:
+    file: "outputs/stp/CNV-89519/CNV-89519_test_plan.md"
+    version: "v1"
+    sections_covered: "Section III - Test Case Descriptions & Traceability"
+  related_prs: []
+  owning_sig: "sig-compute"
+  participating_sigs:
+    - "sig-compute"
+  total_scenarios: 8
+  functional_count: 5
+  e2e_count: 3
+  p0_count: 5
+  p1_count: 2
+  p2_count: 1
+
+code_generation_config:
+  std_version: "2.1-enhanced"
+  framework: "ginkgo-v2"
+  assertion_library: "gomega"
+  language: "go"
+  package_name: "compute"
+  context_init:
+    - statement: "ctx := context.Background()"
+      variable: "ctx"
+      type: "context.Context"
+    - statement: "namespace := testsuite.GetTestNamespace(nil)"
+      variable: "namespace"
+      type: "string"
+  imports:
+    dot_imports:
+      - "github.com/onsi/ginkgo/v2"
+      - "github.com/onsi/gomega"
+    standard:
+      - "context"
+      - "time"
+    project_api:
+      - path: "kubevirt.io/api/core/v1"
+        alias: "v1"
+    k8s_core:
+      - path: "k8s.io/api/core/v1"
+        alias: "k8sv1"
+      - path: "k8s.io/apimachinery/pkg/apis/meta/v1"
+        alias: "metav1"
+    test_framework:
+      - "kubevirt.io/kubevirt/tests/decorators"
+      - "kubevirt.io/kubevirt/tests/framework/kubevirt"
+      - "kubevirt.io/kubevirt/tests/testsuite"
+      - "kubevirt.io/kubevirt/tests/libvmi"
+  timeout_constants:
+    small: "StartupTimeoutSecondsSmall"
+    medium: "StartupTimeoutSecondsMedium"
+    large: "StartupTimeoutSecondsLarge"
+  helper_library_imports:
+    libvmifact: "kubevirt.io/kubevirt/tests/libvmifact"
+    libwait: "kubevirt.io/kubevirt/tests/libwait"
+    libpod: "kubevirt.io/kubevirt/tests/libpod"
+    libvmops: "kubevirt.io/kubevirt/tests/libvmops"
+    console: "kubevirt.io/kubevirt/tests/console"
+    matcher: "kubevirt.io/kubevirt/tests/framework/matcher"
+
+common_preconditions:
+  infrastructure:
+    - name: "OpenShift cluster"
+      requirement: "OCP 4.22+ with OVN-Kubernetes CNI"
+      validation: "oc version"
+    - name: "OpenShift Virtualization operator"
+      requirement: "CNV 4.22+ installed and healthy"
+      validation: "oc get deployment -n openshift-cnv | grep hco-operator"
+    - name: "Multi-node cluster"
+      requirement: "At least 3 worker nodes for scale testing"
+      validation: "oc get nodes -l node-role.kubernetes.io/worker --no-headers | wc -l"
+    - name: "Compute resources"
+      requirement: "Minimum 16 vCPUs, 64GB RAM per worker node for 50+ VMs"
+      validation: "oc describe node <worker> | grep -A5 Allocatable"
+
+  operators:
+    - name: "OpenShift Virtualization"
+      namespace: "openshift-cnv"
+      validation: "oc get csv -n openshift-cnv | grep kubevirt-hyperconverged"
+    - name: "HyperConverged Cluster Operator"
+      namespace: "openshift-cnv"
+      validation: "oc get csv -n openshift-cnv | grep hco-operator"
+
+  cluster_configuration:
+    topology: "Multi-node"
+    cpu_features: "Standard (VT-x or AMD-V)"
+    storage: "ocs-storagecluster-ceph-rbd or hostpath-csi"
+    network: "OVN-Kubernetes (default)"
+
+  rbac_requirements:
+    - permission: "delete pods in openshift-cnv namespace"
+      scope: "Namespace: openshift-cnv"
+      validation: "oc auth can-i delete pods -n openshift-cnv"
+    - permission: "get/list/watch virtualmachineinstances"
+      scope: "Cluster"
+      validation: "oc auth can-i get virtualmachineinstances --all-namespaces"
+    - permission: "create/delete virtualmachines"
+      scope: "Namespace: test namespace"
+      validation: "oc auth can-i create virtualmachines"
+
+scenarios:
+  # ============================================================================
+  # TIER 1 — Functional / Unit Tests (Go/Ginkgo)
+  # ============================================================================
+
+  - scenario_id: "001"
+    test_id: "TS-CNV-89519-001"
+    tier: "Functional"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-89519"
+
+    patterns:
+      primary: "unit-retry-mechanism"
+      secondary:
+        - "mock-client-factory"
+        - "domain-retrieval"
+      helpers_required:
+        - name: "mock cmdclient"
+          functions: ["NewClient", "GetDomain"]
+          purpose: "Mock virt-launcher cmd-client for transient failure simulation"
+      decorators:
+        - "decorators.SigCompute"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["BeforeAll", "It"]
+          comment: "Test context"
+        - name: "mockClientFactory"
+          type: "func(string) (cmdclient.LauncherClient, error)"
+          initialized_in: "BeforeEach"
+          used_in: ["It"]
+          comment: "Configurable mock client factory"
+        - name: "domain"
+          type: "*api.Domain"
+          initialized_in: "It"
+          used_in: ["It"]
+          comment: "Retrieved domain result"
+        - name: "err"
+          type: "error"
+          initialized_in: "It"
+          used_in: ["It"]
+          comment: "Error result"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "virt-handler domain reconciliation"
+        decorators:
+          - "decorators.SigCompute"
+      context:
+        description: "getDomainWithRetry succeeds after transient failure"
+        decorators:
+          - "Ordered"
+      it:
+        description: "should return domain after retry on transient socket failure"
+        test_id_format: "[test_id:TS-CNV-89519-001]"
+
+    code_structure: |
+      Context("getDomainWithRetry succeeds after transient failure", Ordered, func() {
+        var mockClientFactory func(string) (cmdclient.LauncherClient, error)
+        var domain *api.Domain
+
+        BeforeEach(func() {
+          callCount := 0
+          mockClientFactory = func(socketPath string) (cmdclient.LauncherClient, error) {
+            callCount++
+            if callCount == 1 {
+              return nil, fmt.Errorf("transient socket error")
+            }
+            return &mockClient{domain: expectedDomain}, nil
+          }
+        })
+
+        It("[test_id:TS-CNV-89519-001]should return domain after retry on transient socket failure", func() {
+          domain, err := getDomainWithRetry(mockClientFactory, socketPath, 3, 100*time.Millisecond)
+          ExpectWithOffset(1, err).ToNot(HaveOccurred())
+          Expect(domain).ToNot(BeNil())
+        })
+      })
+
+    test_objective:
+      title: "getDomainWithRetry succeeds after transient failure"
+      what: |
+        Tests that the getDomainWithRetry function successfully retrieves a domain
+        after encountering a transient socket connection failure on the first attempt.
+        The mock client factory returns an error on the first call and a valid domain
+        on the second call, verifying the retry mechanism works correctly.
+      why: |
+        This is the core fix for CNV-89519. When virt-handler restarts during a rolling
+        update, transient socket failures to virt-launcher pods are expected. Without
+        retry logic, a single failure causes the domain to be missed, leading to
+        incorrect VMI Failed phase transitions. This test validates that the retry
+        mechanism prevents such false negatives.
+      acceptance_criteria:
+        - "getDomainWithRetry returns a non-nil domain after transient failure"
+        - "No error is returned after successful retry"
+        - "Domain properties match the expected running domain"
+
+    classification:
+      test_type: "Functional"
+      scope: "Single-component"
+      automation_approach: "Go/Ginkgo unit test with mock client"
+
+    specific_preconditions:
+      - name: "Mock cmd-client"
+        requirement: "Client factory that fails on first call, succeeds on retry"
+        validation: "Unit test setup"
+
+    test_data:
+      resource_definitions:
+        - name: "expectedDomain"
+          type: "api.Domain"
+          yaml: |
+            metadata:
+              name: "test-vmi"
+              namespace: "test-namespace"
+            status:
+              status: "Running"
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Create mock client factory with transient failure behavior"
+          command: "Configure mock to fail on first call, succeed on second"
+          validation: "Mock factory created and configured"
+          pattern_id: "mock-client-factory"
+          code_template: |
+            callCount := 0
+            mockClientFactory = func(socketPath string) (cmdclient.LauncherClient, error) {
+              callCount++
+              if callCount == 1 {
+                return nil, fmt.Errorf("transient socket error")
+              }
+              return &mockClient{domain: expectedDomain}, nil
+            }
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Call getDomainWithRetry with mock factory"
+          command: "getDomainWithRetry(mockClientFactory, socketPath, 3, 100*time.Millisecond)"
+          validation: "Domain is returned, no error"
+          pattern_id: "domain-retrieval"
+          code_template: |
+            domain, err = getDomainWithRetry(mockClientFactory, socketPath, 3, 100*time.Millisecond)
+            ExpectWithOffset(1, err).ToNot(HaveOccurred())
+            Expect(domain).ToNot(BeNil())
+      cleanup: []
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "Domain is returned successfully after retry"
+        condition: "domain != nil && err == nil"
+        failure_impact: "Retry mechanism does not recover from transient failures, VMIs will be incorrectly marked Failed"
+
+    dependencies:
+      kubernetes_resources: []
+      external_tools: []
+      scenario_specific_rbac: []
+
+  - scenario_id: "002"
+    test_id: "TS-CNV-89519-002"
+    tier: "Functional"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-89519"
+
+    patterns:
+      primary: "unit-retry-exhaustion"
+      secondary:
+        - "mock-client-factory"
+        - "domain-retrieval"
+      helpers_required:
+        - name: "mock cmdclient"
+          functions: ["NewClient", "GetDomain"]
+          purpose: "Mock virt-launcher cmd-client for persistent failure simulation"
+      decorators:
+        - "decorators.SigCompute"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["BeforeAll", "It"]
+          comment: "Test context"
+        - name: "mockClientFactory"
+          type: "func(string) (cmdclient.LauncherClient, error)"
+          initialized_in: "BeforeEach"
+          used_in: ["It"]
+          comment: "Mock factory that always fails"
+        - name: "domain"
+          type: "*api.Domain"
+          initialized_in: "It"
+          used_in: ["It"]
+          comment: "Retrieved domain result (expected nil)"
+        - name: "err"
+          type: "error"
+          initialized_in: "It"
+          used_in: ["It"]
+          comment: "Error result"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "virt-handler domain reconciliation"
+        decorators:
+          - "decorators.SigCompute"
+      context:
+        description: "getDomainWithRetry returns nil after exhausting retries"
+        decorators:
+          - "Ordered"
+      it:
+        description: "should return nil after all retry attempts are exhausted"
+        test_id_format: "[test_id:TS-CNV-89519-002]"
+
+    code_structure: |
+      Context("getDomainWithRetry returns nil after exhausting retries", Ordered, func() {
+        var mockClientFactory func(string) (cmdclient.LauncherClient, error)
+        var domain *api.Domain
+        var attemptCount int
+
+        BeforeEach(func() {
+          attemptCount = 0
+          mockClientFactory = func(socketPath string) (cmdclient.LauncherClient, error) {
+            attemptCount++
+            return nil, fmt.Errorf("persistent socket error")
+          }
+        })
+
+        It("[test_id:TS-CNV-89519-002]should return nil after all retry attempts are exhausted", func() {
+          domain, _ := getDomainWithRetry(mockClientFactory, socketPath, 3, 100*time.Millisecond)
+          Expect(domain).To(BeNil())
+          Expect(attemptCount).To(Equal(4)) // initial + 3 retries
+        })
+      })
+
+    test_objective:
+      title: "getDomainWithRetry returns nil after exhausting retries"
+      what: |
+        Tests that getDomainWithRetry correctly returns nil when all retry attempts
+        are exhausted due to a persistent socket connection failure. Verifies that
+        exactly maxRetries+1 total attempts are made (1 initial + 3 retries).
+      why: |
+        When a virt-launcher socket is permanently unavailable (e.g., launcher pod
+        crashed), the retry mechanism must eventually give up and return nil so the
+        caller can take appropriate action. This prevents infinite retry loops and
+        ensures the system can correctly identify truly failed domains.
+      acceptance_criteria:
+        - "getDomainWithRetry returns nil domain on persistent failure"
+        - "Exactly maxRetries+1 total attempts are made"
+        - "Function completes within expected time bounds"
+
+    classification:
+      test_type: "Functional"
+      scope: "Single-component"
+      automation_approach: "Go/Ginkgo unit test with mock client"
+
+    specific_preconditions:
+      - name: "Persistent-failure mock client"
+        requirement: "Client factory that always returns error"
+        validation: "Unit test setup"
+
+    test_data:
+      resource_definitions: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Create mock client factory that always fails"
+          command: "Configure mock to return error on every call"
+          validation: "Mock factory created"
+          pattern_id: "mock-client-factory"
+          code_template: |
+            attemptCount = 0
+            mockClientFactory = func(socketPath string) (cmdclient.LauncherClient, error) {
+              attemptCount++
+              return nil, fmt.Errorf("persistent socket error")
+            }
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Call getDomainWithRetry with persistently failing mock"
+          command: "getDomainWithRetry(mockClientFactory, socketPath, 3, 100*time.Millisecond)"
+          validation: "Returns nil domain; exactly 4 total attempts"
+          pattern_id: "domain-retrieval"
+          code_template: |
+            domain, _ = getDomainWithRetry(mockClientFactory, socketPath, 3, 100*time.Millisecond)
+            Expect(domain).To(BeNil())
+            Expect(attemptCount).To(Equal(4))
+      cleanup: []
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "Domain is nil after exhausting retries"
+        condition: "domain == nil"
+        failure_impact: "Retry mechanism may loop indefinitely or return stale data"
+      - assertion_id: "ASSERT-02"
+        priority: "P0"
+        description: "Exactly maxRetries+1 attempts are made"
+        condition: "attemptCount == 4"
+        failure_impact: "Incorrect retry count could waste time or miss recovery windows"
+
+    dependencies:
+      kubernetes_resources: []
+      external_tools: []
+      scenario_specific_rbac: []
+
+  - scenario_id: "003"
+    test_id: "TS-CNV-89519-003"
+    tier: "Functional"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-89519"
+
+    patterns:
+      primary: "unit-domain-discovery"
+      secondary:
+        - "ghost-record-store"
+        - "socket-iteration"
+      helpers_required:
+        - name: "ghost record store"
+          functions: ["Add", "GetAll", "Exists"]
+          purpose: "Populate and query in-memory ghost record cache"
+      decorators:
+        - "decorators.SigCompute"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["BeforeAll", "It"]
+          comment: "Test context"
+        - name: "ghostRecords"
+          type: "[]GhostRecord"
+          initialized_in: "BeforeEach"
+          used_in: ["It"]
+          comment: "Pre-populated ghost records"
+        - name: "domains"
+          type: "[]*api.Domain"
+          initialized_in: "It"
+          used_in: ["It"]
+          comment: "Discovered domains"
+        - name: "err"
+          type: "error"
+          initialized_in: "It"
+          used_in: ["It"]
+          comment: "Error result"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "virt-handler domain reconciliation"
+        decorators:
+          - "decorators.SigCompute"
+      context:
+        description: "listAllKnownDomains discovers all ghost record domains"
+        decorators:
+          - "Ordered"
+      it:
+        description: "should discover all N domains from ghost records with retry"
+        test_id_format: "[test_id:TS-CNV-89519-003]"
+
+    code_structure: |
+      Context("listAllKnownDomains discovers all ghost record domains", Ordered, func() {
+        var ghostRecords []GhostRecord
+        var domains []*api.Domain
+
+        BeforeEach(func() {
+          // Populate GhostRecordGlobalStore with N records
+          // Ensure corresponding socket files exist
+        })
+
+        It("[test_id:TS-CNV-89519-003]should discover all N domains from ghost records with retry", func() {
+          domains, err := listAllKnownDomains()
+          ExpectWithOffset(1, err).ToNot(HaveOccurred())
+          Expect(domains).To(HaveLen(len(ghostRecords)))
+        })
+      })
+
+    test_objective:
+      title: "listAllKnownDomains discovers all ghost record domains"
+      what: |
+        Tests that listAllKnownDomains iterates over all entries in the
+        GhostRecordGlobalStore, connects to their corresponding virt-launcher
+        sockets, and retrieves all running domains. Uses the retry mechanism
+        (getDomainWithRetry) internally to handle transient failures.
+      why: |
+        This is the function called during virt-handler startup to discover all
+        running domains on a node. If it misses any domain, the corresponding VMI
+        will be incorrectly transitioned to Failed. This test ensures complete
+        discovery with the retry enhancement.
+      acceptance_criteria:
+        - "All N ghost record domains are discovered"
+        - "No domains are missed"
+        - "Function returns complete domain list"
+
+    classification:
+      test_type: "Functional"
+      scope: "Single-component"
+      automation_approach: "Go/Ginkgo unit test with mock ghost records"
+
+    specific_preconditions:
+      - name: "Populated ghost record store"
+        requirement: "GhostRecordGlobalStore with N records and responsive sockets"
+        validation: "Unit test setup"
+
+    test_data:
+      resource_definitions:
+        - name: "ghostRecord"
+          type: "GhostRecord"
+          yaml: |
+            namespace: "test-namespace"
+            name: "test-vmi-{N}"
+            socketPath: "/var/run/kubevirt/sockets/test-vmi-{N}.sock"
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Populate GhostRecordGlobalStore with multiple ghost records"
+          command: "Add N records to global store with valid socket paths"
+          validation: "Store contains N records"
+          pattern_id: "ghost-record-store"
+          code_template: |
+            for i := 0; i < numRecords; i++ {
+              record := GhostRecord{
+                Namespace:  "test-namespace",
+                Name:       fmt.Sprintf("test-vmi-%d", i),
+                SocketPath: fmt.Sprintf("/var/run/kubevirt/sockets/test-vmi-%d.sock", i),
+              }
+              GhostRecordGlobalStore.Add(record)
+            }
+        - step_id: "SETUP-02"
+          action: "Ensure corresponding socket files exist and are responsive"
+          command: "Create mock socket listeners for all ghost records"
+          validation: "All socket files exist and accept connections"
+          pattern_id: "socket-iteration"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Call listAllKnownDomains"
+          command: "listAllKnownDomains()"
+          validation: "Returns all N domains"
+          pattern_id: "unit-domain-discovery"
+          code_template: |
+            domains, err = listAllKnownDomains()
+            ExpectWithOffset(1, err).ToNot(HaveOccurred())
+            Expect(domains).To(HaveLen(numRecords))
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Clear ghost record store"
+          command: "GhostRecordGlobalStore.Clear()"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "All ghost record domains are discovered"
+        condition: "len(domains) == numRecords"
+        failure_impact: "Missed domains will trigger false VMI Failed transitions"
+
+    dependencies:
+      kubernetes_resources: []
+      external_tools: []
+      scenario_specific_rbac: []
+
+  - scenario_id: "004"
+    test_id: "TS-CNV-89519-004"
+    tier: "Functional"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-89519"
+
+    patterns:
+      primary: "unit-ghost-record-init"
+      secondary:
+        - "checkpoint-manager"
+        - "disk-io"
+      helpers_required:
+        - name: "checkpoint manager"
+          functions: ["ListCheckpoints", "GetCheckpoint"]
+          purpose: "Manage ghost record checkpoint files on disk"
+      decorators:
+        - "decorators.SigCompute"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["BeforeAll", "It"]
+          comment: "Test context"
+        - name: "checkpointDir"
+          type: "string"
+          initialized_in: "BeforeEach"
+          used_in: ["It"]
+          comment: "Temporary checkpoint directory"
+        - name: "numRecords"
+          type: "int"
+          initialized_in: "BeforeEach"
+          used_in: ["It"]
+          comment: "Number of checkpoint records to create"
+        - name: "err"
+          type: "error"
+          initialized_in: "It"
+          used_in: ["It"]
+          comment: "Error result"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "virt-handler domain reconciliation"
+        decorators:
+          - "decorators.SigCompute"
+      context:
+        description: "InitializeGhostRecordCache loads all checkpoints"
+        decorators:
+          - "Ordered"
+      it:
+        description: "should load all N checkpoint records from disk into memory cache"
+        test_id_format: "[test_id:TS-CNV-89519-004]"
+
+    code_structure: |
+      Context("InitializeGhostRecordCache loads all checkpoints", Ordered, func() {
+        var checkpointDir string
+        var numRecords int
+
+        BeforeEach(func() {
+          checkpointDir = GinkgoT().TempDir()
+          numRecords = 5
+          // Create N checkpoint files on disk
+        })
+
+        It("[test_id:TS-CNV-89519-004]should load all N checkpoint records from disk into memory cache", func() {
+          err := InitializeGhostRecordCache(checkpointManager)
+          ExpectWithOffset(1, err).ToNot(HaveOccurred())
+          for i := 0; i < numRecords; i++ {
+            Expect(GhostRecordGlobalStore.Exists(keys[i])).To(BeTrue())
+          }
+        })
+      })
+
+    test_objective:
+      title: "InitializeGhostRecordCache loads all checkpoints"
+      what: |
+        Tests that InitializeGhostRecordCache reads all ghost record checkpoint
+        files from the on-disk directory and loads them into the in-memory
+        GhostRecordGlobalStore. Each checkpoint represents a VM that was
+        previously running on the node.
+      why: |
+        Ghost record initialization is the first step when virt-handler starts.
+        If any checkpoint is missed during loading, the corresponding VM will not
+        be discovered during domain listing, leading to false Failed transitions.
+        This test ensures complete checkpoint loading.
+      acceptance_criteria:
+        - "All N checkpoint files are read from disk"
+        - "All N records are present in GhostRecordGlobalStore"
+        - "GhostRecordGlobalStore.Exists() returns true for each record"
+
+    classification:
+      test_type: "Functional"
+      scope: "Single-component"
+      automation_approach: "Go/Ginkgo unit test with temp directory"
+
+    specific_preconditions:
+      - name: "Checkpoint directory"
+        requirement: "Temporary directory with N ghost record checkpoint files"
+        validation: "Unit test setup"
+
+    test_data:
+      resource_definitions:
+        - name: "checkpointFile"
+          type: "GhostRecordCheckpoint"
+          yaml: |
+            namespace: "test-namespace"
+            name: "test-vmi-{N}"
+            uid: "uid-{N}"
+            socketPath: "/var/run/kubevirt/sockets/test-vmi-{N}.sock"
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Create temporary checkpoint directory with N files"
+          command: "Write N ghost record checkpoint files to temp directory"
+          validation: "N files exist in checkpoint directory"
+          pattern_id: "checkpoint-manager"
+          code_template: |
+            checkpointDir = GinkgoT().TempDir()
+            numRecords = 5
+            for i := 0; i < numRecords; i++ {
+              writeCheckpointFile(checkpointDir, fmt.Sprintf("test-vmi-%d", i))
+            }
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Initialize ghost record cache from checkpoint directory"
+          command: "InitializeGhostRecordCache(checkpointManager)"
+          validation: "All records loaded into GhostRecordGlobalStore"
+          pattern_id: "unit-ghost-record-init"
+          code_template: |
+            err = InitializeGhostRecordCache(checkpointManager)
+            ExpectWithOffset(1, err).ToNot(HaveOccurred())
+            for i := 0; i < numRecords; i++ {
+              key := fmt.Sprintf("test-namespace/test-vmi-%d", i)
+              Expect(GhostRecordGlobalStore.Exists(key)).To(BeTrue())
+            }
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Clear ghost record store"
+          command: "GhostRecordGlobalStore.Clear()"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "All checkpoint records are loaded into memory"
+        condition: "GhostRecordGlobalStore.Exists(key) == true for all N records"
+        failure_impact: "Missing ghost records prevent domain discovery, causing VMI Failed transitions"
+
+    dependencies:
+      kubernetes_resources: []
+      external_tools: []
+      scenario_specific_rbac: []
+
+  - scenario_id: "005"
+    test_id: "TS-CNV-89519-005"
+    tier: "Functional"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-89519"
+
+    patterns:
+      primary: "unit-phase-calculation"
+      secondary:
+        - "vmi-status-reason"
+        - "launcher-client-check"
+      helpers_required:
+        - name: "mock launcher client"
+          functions: ["Ping", "IsReady"]
+          purpose: "Simulate responsive vs unresponsive launcher"
+      decorators:
+        - "decorators.SigCompute"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["BeforeAll", "It"]
+          comment: "Test context"
+        - name: "vmi"
+          type: "*v1.VirtualMachineInstance"
+          initialized_in: "BeforeEach"
+          used_in: ["It"]
+          comment: "VMI in Running phase"
+        - name: "phase"
+          type: "v1.VirtualMachineInstancePhase"
+          initialized_in: "It"
+          used_in: ["It"]
+          comment: "Calculated phase result"
+        - name: "err"
+          type: "error"
+          initialized_in: "It"
+          used_in: ["It"]
+          comment: "Error result"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "virt-handler domain reconciliation"
+        decorators:
+          - "decorators.SigCompute"
+      context:
+        description: "calculateVmPhaseForStatusReason with nil domain"
+        decorators:
+          - "Ordered"
+      it:
+        description: "should return correct phase based on launcher responsiveness when domain is nil"
+        test_id_format: "[test_id:TS-CNV-89519-005]"
+
+    code_structure: |
+      Context("calculateVmPhaseForStatusReason with nil domain", Ordered, func() {
+        var vmi *v1.VirtualMachineInstance
+
+        BeforeEach(func() {
+          vmi = &v1.VirtualMachineInstance{
+            Status: v1.VirtualMachineInstanceStatus{
+              Phase: v1.Running,
+            },
+          }
+        })
+
+        It("[test_id:TS-CNV-89519-005]should not transition to Failed when launcher is responsive and domain is nil", func() {
+          phase := calculateVmPhaseForStatusReason(nil, vmi, responsiveLauncherClient)
+          Expect(phase).ToNot(Equal(v1.Failed))
+        })
+
+        It("[test_id:TS-CNV-89519-005b]should transition to Failed when launcher is unresponsive and domain is nil", func() {
+          phase := calculateVmPhaseForStatusReason(nil, vmi, unresponsiveLauncherClient)
+          Expect(phase).To(Equal(v1.Failed))
+        })
+      })
+
+    test_objective:
+      title: "calculateVmPhaseForStatusReason with nil domain"
+      what: |
+        Tests the calculateVmPhaseForStatusReason function behavior when the domain
+        is nil (not found during scan). Validates two sub-cases: (1) launcher is
+        responsive — phase should NOT transition to Failed, and (2) launcher is
+        unresponsive — phase should transition to Failed. This is the code path
+        at vm.go:2196-2220 that caused the original bug.
+      why: |
+        The root cause of CNV-89519 was that a missed domain (nil) combined with
+        a momentarily unresponsive launcher caused an incorrect Failed transition.
+        This test validates the decision logic that determines VMI phase when the
+        domain is nil, ensuring responsive launchers prevent false Failed transitions.
+      acceptance_criteria:
+        - "When domain is nil and launcher is responsive, phase is NOT Failed"
+        - "When domain is nil and launcher is unresponsive, phase IS Failed"
+        - "Phase transition logic correctly differentiates the two cases"
+
+    classification:
+      test_type: "Functional"
+      scope: "Single-component"
+      automation_approach: "Go/Ginkgo unit test with mock launcher client"
+
+    specific_preconditions:
+      - name: "VMI in Running phase"
+        requirement: "VirtualMachineInstance with Status.Phase == Running"
+        validation: "Unit test setup"
+
+    test_data:
+      resource_definitions:
+        - name: "runningVMI"
+          type: "v1.VirtualMachineInstance"
+          yaml: |
+            apiVersion: kubevirt.io/v1
+            kind: VirtualMachineInstance
+            metadata:
+              name: "test-vmi"
+              namespace: "test-namespace"
+            status:
+              phase: Running
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Create VMI object in Running phase"
+          command: "Construct VirtualMachineInstance with Status.Phase = Running"
+          validation: "VMI object created"
+          pattern_id: "vmi-status-reason"
+          code_template: |
+            vmi = &v1.VirtualMachineInstance{
+              Status: v1.VirtualMachineInstanceStatus{
+                Phase: v1.Running,
+              },
+            }
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Call calculateVmPhaseForStatusReason with nil domain and responsive launcher"
+          command: "calculateVmPhaseForStatusReason(nil, vmi, responsiveLauncher)"
+          validation: "Phase is NOT Failed"
+          pattern_id: "unit-phase-calculation"
+          code_template: |
+            phase = calculateVmPhaseForStatusReason(nil, vmi, responsiveLauncherClient)
+            Expect(phase).ToNot(Equal(v1.Failed))
+        - step_id: "TEST-02"
+          action: "Call calculateVmPhaseForStatusReason with nil domain and unresponsive launcher"
+          command: "calculateVmPhaseForStatusReason(nil, vmi, unresponsiveLauncher)"
+          validation: "Phase IS Failed"
+          pattern_id: "unit-phase-calculation"
+          code_template: |
+            phase = calculateVmPhaseForStatusReason(nil, vmi, unresponsiveLauncherClient)
+            Expect(phase).To(Equal(v1.Failed))
+      cleanup: []
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "Responsive launcher prevents Failed transition when domain is nil"
+        condition: "phase != v1.Failed when launcher.Ping() succeeds"
+        failure_impact: "False Failed transitions during virt-handler restart with running VMs"
+      - assertion_id: "ASSERT-02"
+        priority: "P0"
+        description: "Unresponsive launcher correctly triggers Failed transition"
+        condition: "phase == v1.Failed when launcher.Ping() fails"
+        failure_impact: "Truly failed VMs would not be detected"
+
+    dependencies:
+      kubernetes_resources: []
+      external_tools: []
+      scenario_specific_rbac: []
+
+  # ============================================================================
+  # TIER 2 — End-to-End Tests (Python/pytest)
+  # ============================================================================
+
+  - scenario_id: "006"
+    test_id: "TS-CNV-89519-006"
+    tier: "End-to-End"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-89519"
+
+    patterns:
+      primary: "vm-lifecycle"
+      secondary:
+        - "virt-handler-restart"
+        - "vmi-phase-monitoring"
+      helpers_required:
+        - name: "utilities.virt"
+          functions: ["VirtualMachineForTests", "fedora_vm_body", "running_vm"]
+          purpose: "VM creation and lifecycle management"
+      decorators:
+        - "polarion"
+
+    variables:
+      closure_scope:
+        - name: "vm"
+          type: "VirtualMachineForTests"
+          initialized_in: "fixture"
+          used_in: ["test"]
+          comment: "Running VM for virt-handler restart test"
+        - name: "virt_handler_pod"
+          type: "Pod"
+          initialized_in: "fixture"
+          used_in: ["test"]
+          comment: "virt-handler pod on the VM's node"
+
+    test_structure:
+      type: "single"
+      describe:
+        description: "VMI domain reconciliation during virt-handler rolling update"
+      context:
+        description: "single VM survives virt-handler pod deletion"
+        decorators: []
+      it:
+        description: "test that running VM survives virt-handler pod deletion and replacement"
+        test_id_format: "test_running_vm_survives_virt_handler_pod_deletion"
+
+    code_structure: |
+      class TestVirtHandlerDomainReconciliation:
+          """
+          Tests for VMI domain reconciliation during virt-handler rolling update.
+
+          STP Reference: outputs/stp/CNV-89519/CNV-89519_test_plan.md
+          Jira: https://redhat.atlassian.net/browse/CNV-89519
+
+          Markers:
+              - gating
+
+          Preconditions:
+              - Running Fedora virtual machine
+              - virt-handler DaemonSet healthy
+          """
+          __test__ = False
+
+          def test_running_vm_survives_virt_handler_pod_deletion(self):
+              """
+              Test that a running VM survives virt-handler pod deletion and replacement.
+
+              Preconditions:
+                  - Running Fedora virtual machine
+                  - virt-handler pod identified on the VM's node
+
+              Steps:
+                  1. Delete the virt-handler pod on the VM's node
+                  2. Wait for the replacement virt-handler pod to become Ready
+                  3. Verify the VMI remains in Running phase
+
+              Expected:
+                  - VMI is "Running"
+              """
+
+    test_objective:
+      title: "Running VM survives virt-handler pod deletion"
+      what: |
+        Tests the end-to-end scenario where a running VM must survive a virt-handler
+        pod deletion and replacement. The new virt-handler pod must discover the
+        existing domain via ghost records and reconnect, keeping the VMI in Running phase.
+      why: |
+        This is the core customer scenario for CNV-89519. During a CNV upgrade, the
+        virt-handler DaemonSet undergoes a rolling update. If the new virt-handler pod
+        fails to discover running domains, VMs are incorrectly marked as Failed,
+        causing customer workload disruption.
+      acceptance_criteria:
+        - "VMI remains in Running phase throughout virt-handler pod replacement"
+        - "No Failed phase transition observed in VMI events"
+        - "VM is accessible after virt-handler replacement"
+
+    classification:
+      test_type: "E2E"
+      scope: "Multi-component"
+      automation_approach: "pytest with python-wrapper"
+
+    specific_preconditions:
+      - name: "Running Fedora VM"
+        requirement: "VirtualMachine with Fedora guest OS in Running phase"
+        validation: "oc get vmi -o jsonpath='{.status.phase}' == Running"
+      - name: "Healthy virt-handler DaemonSet"
+        requirement: "virt-handler pods running on all worker nodes"
+        validation: "oc get ds virt-handler -n openshift-cnv -o jsonpath='{.status.numberReady}'"
+
+    test_data:
+      resource_definitions:
+        - name: "fedoraVM"
+          type: "VirtualMachine"
+          yaml: |
+            apiVersion: kubevirt.io/v1
+            kind: VirtualMachine
+            metadata:
+              name: "test-vm-virt-handler-restart"
+            spec:
+              running: true
+              template:
+                spec:
+                  domain:
+                    resources:
+                      requests:
+                        memory: "1Gi"
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Create and start a Fedora VirtualMachine"
+          command: "VirtualMachineForTests with fedora_vm_body"
+          validation: "VMI is in Running phase"
+          pattern_id: "vm-lifecycle"
+        - step_id: "SETUP-02"
+          action: "Identify the virt-handler pod on the VM's node"
+          command: "oc get pods -n openshift-cnv -l kubevirt.io=virt-handler -o wide"
+          validation: "virt-handler pod name and node identified"
+          pattern_id: "virt-handler-restart"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Delete the virt-handler pod on the VM's node"
+          command: "oc delete pod <virt-handler-pod> -n openshift-cnv"
+          validation: "Pod is deleted"
+          pattern_id: "virt-handler-restart"
+        - step_id: "TEST-02"
+          action: "Wait for the replacement virt-handler pod to become Ready"
+          command: "oc wait pod -n openshift-cnv -l kubevirt.io=virt-handler --field-selector spec.nodeName=<node> --for=condition=Ready --timeout=120s"
+          validation: "Replacement pod is Ready"
+          pattern_id: "virt-handler-restart"
+        - step_id: "TEST-03"
+          action: "Verify the VMI remains in Running phase"
+          command: "oc get vmi <name> -o jsonpath='{.status.phase}'"
+          validation: "VMI phase is Running"
+          pattern_id: "vmi-phase-monitoring"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Delete the VirtualMachine"
+          command: "Context manager handles cleanup"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "VMI remains in Running phase after virt-handler replacement"
+        condition: "vmi.status.phase == 'Running'"
+        failure_impact: "VM workload disrupted during routine CNV update"
+
+    dependencies:
+      kubernetes_resources:
+        - "VirtualMachine: test-vm-virt-handler-restart"
+        - "DaemonSet: virt-handler (openshift-cnv)"
+      external_tools:
+        - "oc CLI"
+        - "virtctl"
+      scenario_specific_rbac:
+        - "delete pods in openshift-cnv namespace"
+
+  - scenario_id: "007"
+    test_id: "TS-CNV-89519-007"
+    tier: "End-to-End"
+    priority: "P1"
+    mvp: false
+    requirement_id: "CNV-89519"
+
+    patterns:
+      primary: "vm-scale-lifecycle"
+      secondary:
+        - "virt-handler-restart"
+        - "vmi-phase-monitoring"
+        - "node-affinity"
+      helpers_required:
+        - name: "utilities.virt"
+          functions: ["VirtualMachineForTests", "fedora_vm_body", "running_vm"]
+          purpose: "VM creation and lifecycle management at scale"
+      decorators:
+        - "polarion"
+
+    variables:
+      closure_scope:
+        - name: "vms"
+          type: "list[VirtualMachineForTests]"
+          initialized_in: "fixture"
+          used_in: ["test"]
+          comment: "Multiple running VMs on same node"
+        - name: "target_node"
+          type: "str"
+          initialized_in: "fixture"
+          used_in: ["test"]
+          comment: "Worker node where all VMs are scheduled"
+
+    test_structure:
+      type: "single"
+      describe:
+        description: "VMI domain reconciliation during virt-handler rolling update"
+      context:
+        description: "multiple VMs survive virt-handler rolling update"
+        decorators: []
+      it:
+        description: "test that multiple running VMs on same node survive virt-handler rolling update"
+        test_id_format: "test_multiple_vms_survive_virt_handler_rolling_update"
+
+    code_structure: |
+      def test_multiple_vms_survive_virt_handler_rolling_update(self):
+          """
+          Test that multiple running VMs (10+) on the same node survive virt-handler rolling update.
+
+          Preconditions:
+              - 10+ running Fedora virtual machines scheduled on the same worker node
+              - virt-handler DaemonSet healthy
+
+          Steps:
+              1. Delete the virt-handler pod on the target node
+              2. Wait for the replacement virt-handler pod to become Ready
+              3. Verify all VMIs remain in Running phase
+              4. Verify no VMI experienced a Failed phase transition via Kubernetes events
+
+          Expected:
+              - All VMIs are "Running"
+          """
+
+    test_objective:
+      title: "Multiple VMs survive virt-handler rolling update on same node"
+      what: |
+        Tests that multiple running VMs (10+) co-located on a single worker node
+        all survive a virt-handler pod restart. This validates the domain discovery
+        retry mechanism under scale conditions, where the ghost record store contains
+        many entries and socket iteration must handle all of them.
+      why: |
+        The original bug manifested at scale (252 VMs per node). While CI cannot
+        reproduce full production scale, testing with 10+ VMs per node validates
+        the retry mechanism handles concurrent domain discovery. A single missed
+        domain at scale would cause customer workload disruption.
+      acceptance_criteria:
+        - "All 10+ VMIs remain in Running phase after virt-handler restart"
+        - "No VMI experiences a Failed phase transition"
+        - "Kubernetes events show no unexpected VMI state changes"
+
+    classification:
+      test_type: "E2E"
+      scope: "Multi-component"
+      automation_approach: "pytest with python-wrapper"
+
+    specific_preconditions:
+      - name: "10+ running VMs on same node"
+        requirement: "At least 10 VirtualMachines scheduled to the same worker node"
+        validation: "oc get vmi --field-selector status.nodeName=<node> | wc -l >= 10"
+      - name: "Adequate compute resources"
+        requirement: "Target node has sufficient CPU/memory for 10+ VMs"
+        validation: "oc describe node <worker> | grep -A5 Allocatable"
+
+    test_data:
+      resource_definitions:
+        - name: "fedoraVMs"
+          type: "VirtualMachine"
+          yaml: |
+            apiVersion: kubevirt.io/v1
+            kind: VirtualMachine
+            metadata:
+              name: "test-vm-scale-{N}"
+            spec:
+              running: true
+              template:
+                spec:
+                  nodeSelector:
+                    kubernetes.io/hostname: "<target-node>"
+                  domain:
+                    resources:
+                      requests:
+                        memory: "512Mi"
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Create and start 10+ Fedora VMs on same worker node"
+          command: "Create VMs with nodeSelector targeting a specific worker"
+          validation: "All VMIs in Running phase on target node"
+          pattern_id: "vm-scale-lifecycle"
+        - step_id: "SETUP-02"
+          action: "Identify the virt-handler pod on the target node"
+          command: "oc get pods -n openshift-cnv -l kubevirt.io=virt-handler --field-selector spec.nodeName=<node>"
+          validation: "virt-handler pod identified"
+          pattern_id: "virt-handler-restart"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Delete the virt-handler pod on the target node"
+          command: "oc delete pod <virt-handler-pod> -n openshift-cnv"
+          validation: "Pod deleted"
+          pattern_id: "virt-handler-restart"
+        - step_id: "TEST-02"
+          action: "Wait for replacement virt-handler pod to become Ready"
+          command: "oc wait pod --for=condition=Ready --timeout=180s"
+          validation: "Replacement pod Ready"
+          pattern_id: "virt-handler-restart"
+        - step_id: "TEST-03"
+          action: "Verify all VMIs remain in Running phase"
+          command: "oc get vmi --field-selector status.nodeName=<node> -o jsonpath='{.items[*].status.phase}'"
+          validation: "All phases are Running"
+          pattern_id: "vmi-phase-monitoring"
+        - step_id: "TEST-04"
+          action: "Check Kubernetes events for unexpected VMI phase transitions"
+          command: "oc get events --field-selector reason=SuccessfulDelete,involvedObject.kind=VirtualMachineInstance"
+          validation: "No Failed transitions in events"
+          pattern_id: "vmi-phase-monitoring"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Delete all test VMs"
+          command: "Context manager handles cleanup"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "All VMIs remain in Running phase after virt-handler restart"
+        condition: "all(vmi.status.phase == 'Running' for vmi in vmis)"
+        failure_impact: "Scale-dependent domain discovery failure causes workload disruption"
+
+    dependencies:
+      kubernetes_resources:
+        - "VirtualMachine: test-vm-scale-{0..9} (10+ instances)"
+        - "DaemonSet: virt-handler (openshift-cnv)"
+      external_tools:
+        - "oc CLI"
+        - "virtctl"
+      scenario_specific_rbac:
+        - "delete pods in openshift-cnv namespace"
+
+  - scenario_id: "008"
+    test_id: "TS-CNV-89519-008"
+    tier: "End-to-End"
+    priority: "P2"
+    mvp: false
+    requirement_id: "CNV-89519"
+
+    patterns:
+      primary: "cnv-upgrade-lifecycle"
+      secondary:
+        - "operator-upgrade"
+        - "vmi-phase-monitoring"
+      helpers_required:
+        - name: "utilities.virt"
+          functions: ["VirtualMachineForTests", "fedora_vm_body", "running_vm"]
+          purpose: "VM creation and lifecycle management"
+      decorators:
+        - "polarion"
+
+    variables:
+      closure_scope:
+        - name: "vms"
+          type: "list[VirtualMachineForTests]"
+          initialized_in: "fixture"
+          used_in: ["test"]
+          comment: "Running VMs across worker nodes"
+        - name: "cnv_version_before"
+          type: "str"
+          initialized_in: "fixture"
+          used_in: ["test"]
+          comment: "CNV version before upgrade"
+
+    test_structure:
+      type: "single"
+      describe:
+        description: "VMI domain reconciliation during CNV upgrade"
+      context:
+        description: "running VMs survive CNV control plane upgrade"
+        decorators: []
+      it:
+        description: "test that running VMs survive full CNV control plane upgrade"
+        test_id_format: "test_running_vms_survive_cnv_upgrade"
+
+    code_structure: |
+      def test_running_vms_survive_cnv_upgrade(self):
+          """
+          Test that running VMs survive full CNV control plane upgrade triggering
+          virt-handler DaemonSet rolling update.
+
+          Preconditions:
+              - Multiple running Fedora virtual machines across worker nodes
+              - CNV upgrade path available (current → next version)
+
+          Steps:
+              1. Initiate CNV operator upgrade
+              2. Monitor VMI phase transitions during upgrade
+              3. Wait for upgrade to complete
+              4. Verify all VMIs remain in Running phase
+
+          Expected:
+              - All VMIs are "Running"
+          """
+
+    test_objective:
+      title: "Running VMs survive CNV control plane upgrade"
+      what: |
+        Tests the full end-to-end upgrade scenario where multiple running VMs
+        across worker nodes must survive a CNV control plane upgrade that triggers
+        a virt-handler DaemonSet rolling update. This validates the complete
+        upgrade path including operator update, DaemonSet rollout, and domain
+        reconciliation on each node.
+      why: |
+        This is the real-world customer scenario that triggered CNV-89519. Customers
+        performing CNV upgrades expect zero VM downtime. The virt-handler rolling
+        update must discover and reconnect to all existing domains on each node
+        as the DaemonSet rolls through the cluster.
+      acceptance_criteria:
+        - "All VMIs remain in Running phase throughout CNV upgrade"
+        - "No spurious Failed phase transitions during upgrade"
+        - "All VMs are accessible after upgrade completion"
+
+    classification:
+      test_type: "E2E"
+      scope: "Multi-component"
+      automation_approach: "pytest with python-wrapper"
+
+    specific_preconditions:
+      - name: "Multiple running VMs across nodes"
+        requirement: "VMs distributed across worker nodes for upgrade testing"
+        validation: "oc get vmi -o wide | verify distribution"
+      - name: "CNV upgrade path available"
+        requirement: "Current CNV version and next version available in catalog"
+        validation: "oc get packagemanifest kubevirt-hyperconverged -o jsonpath='{.status.channels}'"
+
+    test_data:
+      resource_definitions:
+        - name: "fedoraVMs"
+          type: "VirtualMachine"
+          yaml: |
+            apiVersion: kubevirt.io/v1
+            kind: VirtualMachine
+            metadata:
+              name: "test-vm-upgrade-{N}"
+            spec:
+              running: true
+              template:
+                spec:
+                  domain:
+                    resources:
+                      requests:
+                        memory: "1Gi"
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Create and start multiple Fedora VMs across worker nodes"
+          command: "Create VMs without nodeSelector for distribution"
+          validation: "All VMIs in Running phase, distributed across nodes"
+          pattern_id: "vm-lifecycle"
+        - step_id: "SETUP-02"
+          action: "Record current CNV version"
+          command: "oc get csv -n openshift-cnv -o jsonpath='{.items[0].spec.version}'"
+          validation: "Current version recorded"
+          pattern_id: "operator-upgrade"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Initiate CNV operator upgrade"
+          command: "Update subscription approval or catalog source"
+          validation: "Upgrade initiated"
+          pattern_id: "operator-upgrade"
+        - step_id: "TEST-02"
+          action: "Monitor VMI phase transitions during upgrade"
+          command: "Watch VMI status phases in a loop during upgrade"
+          validation: "No Failed transitions detected"
+          pattern_id: "vmi-phase-monitoring"
+        - step_id: "TEST-03"
+          action: "Wait for upgrade to complete"
+          command: "oc wait csv -n openshift-cnv --for=jsonpath='{.status.phase}'=Succeeded --timeout=600s"
+          validation: "Upgrade completed successfully"
+          pattern_id: "operator-upgrade"
+        - step_id: "TEST-04"
+          action: "Verify all VMIs remain in Running phase"
+          command: "oc get vmi -o jsonpath='{.items[*].status.phase}'"
+          validation: "All phases are Running"
+          pattern_id: "vmi-phase-monitoring"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Delete all test VMs"
+          command: "Context manager handles cleanup"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "All VMIs remain in Running phase after CNV upgrade"
+        condition: "all(vmi.status.phase == 'Running' for vmi in vmis)"
+        failure_impact: "Customer workloads disrupted during routine CNV upgrade"
+
+    dependencies:
+      kubernetes_resources:
+        - "VirtualMachine: test-vm-upgrade-{0..N}"
+        - "DaemonSet: virt-handler (openshift-cnv)"
+        - "ClusterServiceVersion: kubevirt-hyperconverged"
+      external_tools:
+        - "oc CLI"
+        - "virtctl"
+      scenario_specific_rbac:
+        - "update subscriptions in openshift-cnv namespace"
+        - "delete pods in openshift-cnv namespace"
