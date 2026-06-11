@@ -2,32 +2,30 @@ status: success
 jira_id: CNV-72329
 std_source: outputs/std/CNV-72329/CNV-72329_test_description.yaml
 test_files:
-  - test_nad_live_update_core.py
-  - test_nad_live_update_multi_interface.py
-  - test_nad_live_update_negative.py
-  - test_nad_live_update_edge_cases.py
-  - test_nad_live_update_validation.py
+  - test_nad_live_update_connectivity.py
+  - test_nad_live_update_integration.py
   - conftest.py
-test_count: 13
+test_count: 7
+scenario_coverage:
+  TS-CNV-72329-003:
+    file: test_nad_live_update_connectivity.py
+    tests:
+      - test_connectivity_on_new_network_after_nad_swap
+      - test_unreachable_on_old_network_after_nad_swap
+  TS-CNV-72329-005:
+    file: test_nad_live_update_connectivity.py
+    tests:
+      - test_simultaneous_nad_updates_single_migration
+      - test_all_interfaces_on_new_networks_after_multi_nad_swap
+  TS-CNV-72329-011:
+    file: test_nad_live_update_integration.py
+    tests:
+      - test_nad_update_during_active_migration
+  TS-CNV-72329-012:
+    file: test_nad_live_update_integration.py
+    tests:
+      - test_nad_swap_on_hotplugged_interface
+      - test_interface_hotplug_after_nad_swap
 lsp_patterns_used: false
 conftest_generated: true
-scenarios_covered:
-  - "005: NAD swap connectivity end-to-end (P0)"
-  - "001: NAD swap triggers migration (P0)"
-  - "003: Interface identity preserved after NAD swap (P0)"
-  - "009: Multi-interface simultaneous NAD swap (P1)"
-  - "010: Partial NAD update preserves unchanged interface (P1)"
-  - "011: Multi-interface NAD swap connectivity (P1)"
-  - "004: Non-existent NAD handled gracefully (P1)"
-  - "021: No-op NAD change no migration (P2)"
-  - "023: RBAC non-admin rejection (P1)"
-  - "015: NAD swap during hotplug (P2)"
-  - "022: Migration target unavailable (P2)"
-  - "018: Namespace-qualified NAD name equivalence (P1)"
-  - "019: VMI spec sync after NAD change (P0)"
-  - "020: Pod network isolation from NAD sync (P1)"
-notes:
-  - "Tier 2 Python/pytest tests using openshift-python-wrapper patterns"
-  - "Tests follow AGENTS.md coding standards (context managers, timeout_sampler, no defensive programming)"
-  - "Scenarios 006-008 (feature gate toggle) and 012-014 (hotplug/hotunplug/link state post-swap) are tier 1 Go/Ginkgo tests — not generated as Python tier 2"
-  - "Upgrade test (TestNADLiveUpdateUpgrade) included with @pytest.mark.upgrade marker"
+total_lines: 838
