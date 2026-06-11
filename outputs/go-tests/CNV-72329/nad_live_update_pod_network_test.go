@@ -35,6 +35,7 @@ import (
 	"kubevirt.io/kubevirt/pkg/libvmi"
 	"kubevirt.io/kubevirt/pkg/pointer"
 
+	"kubevirt.io/kubevirt/tests/console"
 	"kubevirt.io/kubevirt/tests/decorators"
 	"kubevirt.io/kubevirt/tests/framework/kubevirt"
 	"kubevirt.io/kubevirt/tests/framework/matcher"
@@ -46,22 +47,21 @@ import (
 )
 
 /*
-Live Update NAD Reference Tests — Core Functionality
+Live Update NAD Reference Tests — Pod Network Preservation
 
 STP Reference: outputs/stp/CNV-72329/CNV-72329_test_plan.md
 Jira: CNV-72329
 
 Scenarios covered:
-  - TS-CNV-72329-001: NAD reference update on running VM without restart (Tier 1, P0)
-  - TS-CNV-72329-002: Auto-migration triggered after NAD reference change (Tier 1, P0)
+  - TS-CNV-72329-006: Pod network preserved during secondary NAD update (Tier 1, P0)
 */
 
-var _ = Describe(SIG("[CNV-72329] Live Update NAD Reference - Core", decorators.RequiresTwoSchedulableNodes, Serial, func() {
+var _ = Describe(SIG("[CNV-72329] Live Update NAD Reference - Pod Network", decorators.RequiresTwoSchedulableNodes, Serial, func() {
 	const (
-		sourceNADName   = "source-nad"
-		targetNADName   = "target-nad"
-		sourceBridge    = "br-source"
-		targetBridge    = "br-target"
+		sourceNADName   = "source-nad-pod"
+		targetNADName   = "target-nad-pod"
+		sourceBridge    = "br-src-pod"
+		targetBridge    = "br-tgt-pod"
 		pollingInterval = 2 * time.Second
 		timeoutInterval = 5 * time.Minute
 	)
@@ -102,10 +102,12 @@ var _ = Describe(SIG("[CNV-72329] Live Update NAD Reference - Core", decorators.
 		Expect(err).ToNot(HaveOccurred())
 	})
 
-	Context("NAD reference update on running VM without restart", func() {
-		It("[test_id:TS-CNV-72329-001] should update NAD reference without requiring VM restart", func() {
-			By("Creating VM with secondary interface on source NAD")
+	Context("Pod network preserved during secondary NAD update", func() {
+		It("[test_id:TS-CNV-72329-006] should preserve pod network connectivity when secondary NAD is updated", func() {
+			By("Creating VM with default pod network and secondary interface on source NAD")
 			vmi := libvmifact.NewFedora(
+				libvmi.WithInterface(*v1.DefaultMasqueradeNetworkInterface()),
+				libvmi.WithNetwork(v1.DefaultPodNetwork()),
 				libvmi.WithInterface(libvmi.InterfaceDeviceWithBridgeBinding("net1")),
 				libvmi.WithNetwork(libvmi.MultusNetwork("net1", sourceNADName)),
 			)
@@ -117,9 +119,19 @@ var _ = Describe(SIG("[CNV-72329] Live Update NAD Reference - Core", decorators.
 			Eventually(matcher.ThisVM(vm)).WithTimeout(timeoutInterval).WithPolling(pollingInterval).
 				Should(matcher.HaveConditionTrue(v1.VirtualMachineInstanceAgentConnected))
 
-			By("Patching VM to change NAD reference to target NAD")
+			vmi, err = kubevirt.Client().VirtualMachineInstance(testNamespace).Get(
+				context.Background(), vm.Name, metav1.GetOptions{})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(console.LoginToFedora(vmi)).To(Succeed())
+
+			By("Verifying pod network connectivity before NAD swap")
+			Expect(libnet.PingFromVMConsole(vmi, "10.96.0.10")).To(Succeed(),
+				"pod network connectivity should work before NAD swap")
+
+			By("Patching VM to change secondary NAD reference to target NAD")
+			// The secondary network is at index 1 (index 0 is the pod network)
 			patchPayload, err := patch.New(
-				patch.WithReplace("/spec/template/spec/networks/0/multus/networkName", targetNADName),
+				patch.WithReplace("/spec/template/spec/networks/1/multus/networkName", targetNADName),
 			).GeneratePayload()
 			Expect(err).ToNot(HaveOccurred())
 
@@ -127,86 +139,31 @@ var _ = Describe(SIG("[CNV-72329] Live Update NAD Reference - Core", decorators.
 				context.Background(), vm.Name, types.JSONPatchType, patchPayload, metav1.PatchOptions{})
 			Expect(err).ToNot(HaveOccurred())
 
-			By("Waiting for migration to complete (NAD change triggers auto-migration)")
-			vmi, err = kubevirt.Client().VirtualMachineInstance(testNamespace).Get(
-				context.Background(), vm.Name, metav1.GetOptions{})
-			Expect(err).ToNot(HaveOccurred())
-
-			Eventually(matcher.ThisVMI(vmi), timeoutInterval, pollingInterval).
-				Should(matcher.HaveConditionMissingOrFalse(v1.VirtualMachineInstanceMigrationRequired))
-
-			By("Verifying VM remains running")
-			Eventually(matcher.ThisVM(vm)).WithTimeout(timeoutInterval).WithPolling(pollingInterval).
-				Should(matcher.BeRunning())
-
-			By("Verifying RestartRequired condition is NOT set")
-			Consistently(func(g Gomega) {
-				vm, err = kubevirt.Client().VirtualMachine(testNamespace).Get(
-					context.Background(), vm.Name, metav1.GetOptions{})
-				g.Expect(err).ToNot(HaveOccurred())
-				for _, condition := range vm.Status.Conditions {
-					g.Expect(condition.Type).ToNot(Equal(v1.VirtualMachineRestartRequired))
-				}
-			}, 10*time.Second, pollingInterval).Should(Succeed())
-
-			By("Verifying VM spec reflects updated NAD reference")
-			vm, err = kubevirt.Client().VirtualMachine(testNamespace).Get(
-				context.Background(), vm.Name, metav1.GetOptions{})
-			Expect(err).ToNot(HaveOccurred())
-			for _, net := range vm.Spec.Template.Spec.Networks {
-				if net.Name == "net1" && net.Multus != nil {
-					Expect(net.Multus.NetworkName).To(Equal(targetNADName),
-						"network should reference target NAD after update")
-				}
-			}
-		})
-	})
-
-	Context("Auto-migration triggered after NAD reference change", func() {
-		It("[test_id:TS-CNV-72329-002] should trigger auto-migration after NAD reference change", func() {
-			By("Creating VM with secondary interface on source NAD")
-			vmi := libvmifact.NewFedora(
-				libvmi.WithInterface(libvmi.InterfaceDeviceWithBridgeBinding("net1")),
-				libvmi.WithNetwork(libvmi.MultusNetwork("net1", sourceNADName)),
-			)
-			vm := libvmi.NewVirtualMachine(vmi, libvmi.WithRunStrategy(v1.RunStrategyAlways))
-			vm, err := kubevirt.Client().VirtualMachine(testNamespace).Create(context.Background(), vm, metav1.CreateOptions{})
-			Expect(err).ToNot(HaveOccurred())
-
-			By("Waiting for VMI to be ready and recording original node")
-			Eventually(matcher.ThisVM(vm)).WithTimeout(timeoutInterval).WithPolling(pollingInterval).
-				Should(matcher.HaveConditionTrue(v1.VirtualMachineInstanceAgentConnected))
-
-			vmi, err = kubevirt.Client().VirtualMachineInstance(testNamespace).Get(
-				context.Background(), vm.Name, metav1.GetOptions{})
-			Expect(err).ToNot(HaveOccurred())
-			originalNode := vmi.Status.NodeName
-			Expect(originalNode).ToNot(BeEmpty(), "VMI should be scheduled to a node")
-
-			By("Patching VM NAD reference to target NAD")
-			patchPayload, err := patch.New(
-				patch.WithReplace("/spec/template/spec/networks/0/multus/networkName", targetNADName),
-			).GeneratePayload()
-			Expect(err).ToNot(HaveOccurred())
-
-			vm, err = kubevirt.Client().VirtualMachine(testNamespace).Patch(
-				context.Background(), vm.Name, types.JSONPatchType, patchPayload, metav1.PatchOptions{})
-			Expect(err).ToNot(HaveOccurred())
-
-			By("Waiting for migration condition to appear")
+			By("Waiting for migration to complete")
 			Eventually(matcher.ThisVMI(vmi), timeoutInterval, pollingInterval).
 				Should(matcher.HaveConditionTrue(v1.VirtualMachineInstanceMigrationRequired))
-
-			By("Waiting for migration condition to resolve (migration complete)")
 			Eventually(matcher.ThisVMI(vmi), timeoutInterval, pollingInterval).
 				Should(matcher.HaveConditionMissingOrFalse(v1.VirtualMachineInstanceMigrationRequired))
 
-			By("Verifying VM landed on different node")
+			By("Verifying pod network interface is still present after secondary NAD swap")
 			vmi, err = kubevirt.Client().VirtualMachineInstance(testNamespace).Get(
 				context.Background(), vm.Name, metav1.GetOptions{})
 			Expect(err).ToNot(HaveOccurred())
-			Expect(vmi.Status.NodeName).ToNot(Equal(originalNode),
-				"VMI should have migrated to a different node after NAD reference change")
+
+			var podNetworkIP string
+			for _, iface := range vmi.Status.Interfaces {
+				if iface.Name == "default" {
+					podNetworkIP = iface.IP
+					break
+				}
+			}
+			Expect(podNetworkIP).ToNot(BeEmpty(),
+				"pod network interface should still have an IP after secondary NAD swap")
+
+			By("Verifying pod network connectivity after NAD swap and migration")
+			Expect(console.LoginToFedora(vmi)).To(Succeed())
+			Expect(libnet.PingFromVMConsole(vmi, "10.96.0.10")).To(Succeed(),
+				"pod network connectivity should still work after secondary NAD swap")
 		})
 	})
 }))

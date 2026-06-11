@@ -21,6 +21,8 @@ package network
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -35,6 +37,7 @@ import (
 	"kubevirt.io/kubevirt/pkg/libvmi"
 	"kubevirt.io/kubevirt/pkg/pointer"
 
+	"kubevirt.io/kubevirt/tests/console"
 	"kubevirt.io/kubevirt/tests/decorators"
 	"kubevirt.io/kubevirt/tests/framework/kubevirt"
 	"kubevirt.io/kubevirt/tests/framework/matcher"
@@ -46,22 +49,21 @@ import (
 )
 
 /*
-Live Update NAD Reference Tests — Core Functionality
+Live Update NAD Reference Tests — Interface Property Preservation
 
 STP Reference: outputs/stp/CNV-72329/CNV-72329_test_plan.md
 Jira: CNV-72329
 
 Scenarios covered:
-  - TS-CNV-72329-001: NAD reference update on running VM without restart (Tier 1, P0)
-  - TS-CNV-72329-002: Auto-migration triggered after NAD reference change (Tier 1, P0)
+  - TS-CNV-72329-004: Guest interface name and MAC preserved after NAD swap (Tier 1, P1)
 */
 
-var _ = Describe(SIG("[CNV-72329] Live Update NAD Reference - Core", decorators.RequiresTwoSchedulableNodes, Serial, func() {
+var _ = Describe(SIG("[CNV-72329] Live Update NAD Reference - Interface Properties", decorators.RequiresTwoSchedulableNodes, Serial, func() {
 	const (
-		sourceNADName   = "source-nad"
-		targetNADName   = "target-nad"
-		sourceBridge    = "br-source"
-		targetBridge    = "br-target"
+		sourceNADName   = "source-nad-props"
+		targetNADName   = "target-nad-props"
+		sourceBridge    = "br-src-props"
+		targetBridge    = "br-tgt-props"
 		pollingInterval = 2 * time.Second
 		timeoutInterval = 5 * time.Minute
 	)
@@ -102,8 +104,8 @@ var _ = Describe(SIG("[CNV-72329] Live Update NAD Reference - Core", decorators.
 		Expect(err).ToNot(HaveOccurred())
 	})
 
-	Context("NAD reference update on running VM without restart", func() {
-		It("[test_id:TS-CNV-72329-001] should update NAD reference without requiring VM restart", func() {
+	Context("Guest interface name and MAC preserved after NAD swap", func() {
+		It("[test_id:TS-CNV-72329-004] should preserve guest interface name and MAC address after NAD swap", func() {
 			By("Creating VM with secondary interface on source NAD")
 			vmi := libvmifact.NewFedora(
 				libvmi.WithInterface(libvmi.InterfaceDeviceWithBridgeBinding("net1")),
@@ -117,6 +119,23 @@ var _ = Describe(SIG("[CNV-72329] Live Update NAD Reference - Core", decorators.
 			Eventually(matcher.ThisVM(vm)).WithTimeout(timeoutInterval).WithPolling(pollingInterval).
 				Should(matcher.HaveConditionTrue(v1.VirtualMachineInstanceAgentConnected))
 
+			By("Recording guest interface name and MAC address before NAD swap")
+			vmi, err = kubevirt.Client().VirtualMachineInstance(testNamespace).Get(
+				context.Background(), vm.Name, metav1.GetOptions{})
+			Expect(err).ToNot(HaveOccurred())
+
+			var originalIfaceName, originalMAC string
+			for _, iface := range vmi.Status.Interfaces {
+				if iface.Name == "net1" {
+					originalIfaceName = iface.InterfaceName
+					originalMAC = iface.MAC
+					break
+				}
+			}
+			Expect(originalIfaceName).ToNot(BeEmpty(), "should find net1 interface name in VMI status")
+			Expect(originalMAC).ToNot(BeEmpty(), "should find net1 interface MAC in VMI status")
+			By(fmt.Sprintf("Recorded interface name: %s, MAC: %s", originalIfaceName, originalMAC))
+
 			By("Patching VM to change NAD reference to target NAD")
 			patchPayload, err := patch.New(
 				patch.WithReplace("/spec/template/spec/networks/0/multus/networkName", targetNADName),
@@ -127,86 +146,30 @@ var _ = Describe(SIG("[CNV-72329] Live Update NAD Reference - Core", decorators.
 				context.Background(), vm.Name, types.JSONPatchType, patchPayload, metav1.PatchOptions{})
 			Expect(err).ToNot(HaveOccurred())
 
-			By("Waiting for migration to complete (NAD change triggers auto-migration)")
-			vmi, err = kubevirt.Client().VirtualMachineInstance(testNamespace).Get(
-				context.Background(), vm.Name, metav1.GetOptions{})
-			Expect(err).ToNot(HaveOccurred())
-
-			Eventually(matcher.ThisVMI(vmi), timeoutInterval, pollingInterval).
-				Should(matcher.HaveConditionMissingOrFalse(v1.VirtualMachineInstanceMigrationRequired))
-
-			By("Verifying VM remains running")
-			Eventually(matcher.ThisVM(vm)).WithTimeout(timeoutInterval).WithPolling(pollingInterval).
-				Should(matcher.BeRunning())
-
-			By("Verifying RestartRequired condition is NOT set")
-			Consistently(func(g Gomega) {
-				vm, err = kubevirt.Client().VirtualMachine(testNamespace).Get(
-					context.Background(), vm.Name, metav1.GetOptions{})
-				g.Expect(err).ToNot(HaveOccurred())
-				for _, condition := range vm.Status.Conditions {
-					g.Expect(condition.Type).ToNot(Equal(v1.VirtualMachineRestartRequired))
-				}
-			}, 10*time.Second, pollingInterval).Should(Succeed())
-
-			By("Verifying VM spec reflects updated NAD reference")
-			vm, err = kubevirt.Client().VirtualMachine(testNamespace).Get(
-				context.Background(), vm.Name, metav1.GetOptions{})
-			Expect(err).ToNot(HaveOccurred())
-			for _, net := range vm.Spec.Template.Spec.Networks {
-				if net.Name == "net1" && net.Multus != nil {
-					Expect(net.Multus.NetworkName).To(Equal(targetNADName),
-						"network should reference target NAD after update")
-				}
-			}
-		})
-	})
-
-	Context("Auto-migration triggered after NAD reference change", func() {
-		It("[test_id:TS-CNV-72329-002] should trigger auto-migration after NAD reference change", func() {
-			By("Creating VM with secondary interface on source NAD")
-			vmi := libvmifact.NewFedora(
-				libvmi.WithInterface(libvmi.InterfaceDeviceWithBridgeBinding("net1")),
-				libvmi.WithNetwork(libvmi.MultusNetwork("net1", sourceNADName)),
-			)
-			vm := libvmi.NewVirtualMachine(vmi, libvmi.WithRunStrategy(v1.RunStrategyAlways))
-			vm, err := kubevirt.Client().VirtualMachine(testNamespace).Create(context.Background(), vm, metav1.CreateOptions{})
-			Expect(err).ToNot(HaveOccurred())
-
-			By("Waiting for VMI to be ready and recording original node")
-			Eventually(matcher.ThisVM(vm)).WithTimeout(timeoutInterval).WithPolling(pollingInterval).
-				Should(matcher.HaveConditionTrue(v1.VirtualMachineInstanceAgentConnected))
-
-			vmi, err = kubevirt.Client().VirtualMachineInstance(testNamespace).Get(
-				context.Background(), vm.Name, metav1.GetOptions{})
-			Expect(err).ToNot(HaveOccurred())
-			originalNode := vmi.Status.NodeName
-			Expect(originalNode).ToNot(BeEmpty(), "VMI should be scheduled to a node")
-
-			By("Patching VM NAD reference to target NAD")
-			patchPayload, err := patch.New(
-				patch.WithReplace("/spec/template/spec/networks/0/multus/networkName", targetNADName),
-			).GeneratePayload()
-			Expect(err).ToNot(HaveOccurred())
-
-			vm, err = kubevirt.Client().VirtualMachine(testNamespace).Patch(
-				context.Background(), vm.Name, types.JSONPatchType, patchPayload, metav1.PatchOptions{})
-			Expect(err).ToNot(HaveOccurred())
-
-			By("Waiting for migration condition to appear")
+			By("Waiting for migration to complete")
 			Eventually(matcher.ThisVMI(vmi), timeoutInterval, pollingInterval).
 				Should(matcher.HaveConditionTrue(v1.VirtualMachineInstanceMigrationRequired))
-
-			By("Waiting for migration condition to resolve (migration complete)")
 			Eventually(matcher.ThisVMI(vmi), timeoutInterval, pollingInterval).
 				Should(matcher.HaveConditionMissingOrFalse(v1.VirtualMachineInstanceMigrationRequired))
 
-			By("Verifying VM landed on different node")
+			By("Verifying guest interface name and MAC are preserved after NAD swap")
 			vmi, err = kubevirt.Client().VirtualMachineInstance(testNamespace).Get(
 				context.Background(), vm.Name, metav1.GetOptions{})
 			Expect(err).ToNot(HaveOccurred())
-			Expect(vmi.Status.NodeName).ToNot(Equal(originalNode),
-				"VMI should have migrated to a different node after NAD reference change")
+
+			var postSwapIfaceName, postSwapMAC string
+			for _, iface := range vmi.Status.Interfaces {
+				if iface.Name == "net1" {
+					postSwapIfaceName = iface.InterfaceName
+					postSwapMAC = iface.MAC
+					break
+				}
+			}
+
+			Expect(postSwapIfaceName).To(Equal(originalIfaceName),
+				"guest interface name should be preserved after NAD swap")
+			Expect(strings.EqualFold(postSwapMAC, originalMAC)).To(BeTrue(),
+				fmt.Sprintf("MAC address should be preserved: expected %s, got %s", originalMAC, postSwapMAC))
 		})
 	})
 }))
