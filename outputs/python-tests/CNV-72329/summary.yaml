@@ -1,0 +1,37 @@
+status: success
+jira_id: CNV-72329
+jira_summary: "Support changing the VM attached network NAD ref using hotplug"
+std_source: outputs/std/CNV-72329/CNV-72329_test_description.yaml
+total_std_scenarios: 23
+tier1_scenarios: 12
+tier2_scenarios: 11
+test_files:
+  - test_nad_live_update_connectivity.py
+  - test_nad_live_update_multi_interface.py
+  - test_nad_live_update_hotplug_integration.py
+  - test_nad_live_update_ui.py
+  - test_nad_live_update_upgrade.py
+  - conftest.py
+test_count: 11
+test_function_mapping:
+  TS-CNV-72329-001: test_nad_reference_change_triggers_live_migration
+  TS-CNV-72329-002: test_vm_connectivity_on_new_network_after_nad_swap
+  TS-CNV-72329-004: test_nad_swap_during_active_network_workload
+  TS-CNV-72329-008: test_ping_to_peer_vm_on_target_network_after_swap
+  TS-CNV-72329-009: test_no_connectivity_to_old_network_peers_after_swap
+  TS-CNV-72329-012: test_concurrent_nad_reference_updates_on_multiple_interfaces
+  TS-CNV-72329-019: test_nad_swap_with_concurrent_interface_hotplug
+  TS-CNV-72329-020: test_nad_swap_with_concurrent_interface_hotunplug
+  TS-CNV-72329-021: test_ui_nad_reference_edit_shows_pending_changes
+  TS-CNV-72329-022: test_nad_swap_functionality_after_cluster_upgrade
+  TS-CNV-72329-023: test_vms_with_changed_nads_persist_through_upgrade
+lsp_patterns_used: false
+conftest_generated: true
+coverage_validation: "PASS - 11/11 Tier 2 scenarios have test functions"
+patterns_used:
+  - network_connectivity (scenarios 1, 2, 4, 8, 9)
+  - multi_interface_update (scenario 12)
+  - hotplug_integration (scenarios 19, 20)
+  - ui_validation (scenario 21)
+  - upgrade_validation (scenarios 22, 23)
+generated_date: "2026-06-11"
