@@ -674,6 +674,16 @@ jobs:
             fi
           fi
 
+      # --- Refresh GitHub token (original may expire after ~60 min) ---
+
+      - name: Refresh qualityflow token (mid-pipeline)
+        id: mid-token
+        uses: ./.defaults/.github/actions/mint-token
+        with:
+          role: coder
+          repos: ${{ steps.repo-parts.outputs.name }}
+          mint_url: ${{ vars.FULLSEND_MINT_URL }}
+
       # --- Stage 5: STD Reviewer ---
 
       - name: Refresh GCP credentials (Stage 5)
@@ -733,8 +743,8 @@ jobs:
           TARGET_BRANCH: ${{ steps.pr-info.outputs.head_ref }}
           TRIGGER_SOURCE: slash-command
           JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PUSH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.mid-token.outputs.token }}
+          PUSH_TOKEN: ${{ steps.mid-token.outputs.token }}
           PRE_AGENT_HEAD: ${{ steps.pre-head.outputs.sha }}
           PR_CHECKOUT_PATH: ${{ github.workspace }}/pr-repo
           SOURCE_REPO_PATH: ${{ github.workspace }}/pr-repo
@@ -750,7 +760,7 @@ jobs:
 
       - name: Restore PR checkout (post-Stage 5)
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.mid-token.outputs.token }}
         run: |
           set -euo pipefail
           PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
@@ -826,8 +836,8 @@ jobs:
           TARGET_BRANCH: ${{ steps.pr-info.outputs.head_ref }}
           TRIGGER_SOURCE: slash-command
           JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PUSH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.mid-token.outputs.token }}
+          PUSH_TOKEN: ${{ steps.mid-token.outputs.token }}
           PRE_AGENT_HEAD: ${{ steps.pre-head.outputs.sha }}
           PR_CHECKOUT_PATH: ${{ github.workspace }}/pr-repo
           SOURCE_REPO_PATH: ${{ github.workspace }}/pr-repo
@@ -843,7 +853,7 @@ jobs:
 
       - name: Restore PR checkout (post-Stage 6)
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.mid-token.outputs.token }}
         run: |
           set -euo pipefail
           PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
@@ -919,8 +929,8 @@ jobs:
           TARGET_BRANCH: ${{ steps.pr-info.outputs.head_ref }}
           TRIGGER_SOURCE: slash-command
           JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PUSH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.mid-token.outputs.token }}
+          PUSH_TOKEN: ${{ steps.mid-token.outputs.token }}
           PRE_AGENT_HEAD: ${{ steps.pre-head.outputs.sha }}
           PR_CHECKOUT_PATH: ${{ github.workspace }}/pr-repo
           SOURCE_REPO_PATH: ${{ github.workspace }}/pr-repo
@@ -936,7 +946,7 @@ jobs:
 
       - name: Restore PR checkout (post-Stage 7)
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.mid-token.outputs.token }}
         run: |
           set -euo pipefail
           PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
@@ -1012,8 +1022,8 @@ jobs:
           TARGET_BRANCH: ${{ steps.pr-info.outputs.head_ref }}
           TRIGGER_SOURCE: slash-command
           JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PUSH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.mid-token.outputs.token }}
+          PUSH_TOKEN: ${{ steps.mid-token.outputs.token }}
           PRE_AGENT_HEAD: ${{ steps.pre-head.outputs.sha }}
           PR_CHECKOUT_PATH: ${{ github.workspace }}/pr-repo
           SOURCE_REPO_PATH: ${{ github.workspace }}/pr-repo
@@ -1027,9 +1037,18 @@ jobs:
 
       # --- Post-pipeline: replace intermediate outputs with organized test files ---
 
+      - name: Refresh token for post-pipeline steps
+        if: always()
+        id: post-token
+        uses: ./.defaults/.github/actions/mint-token
+        with:
+          role: coder
+          repos: ${{ steps.repo-parts.outputs.name }}
+          mint_url: ${{ vars.FULLSEND_MINT_URL }}
+
       - name: Restore PR checkout (post-Stage 8)
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.post-token.outputs.token }}
         run: |
           set -euo pipefail
           PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
@@ -1051,7 +1070,7 @@ jobs:
       - name: Organize tests and clean artifacts
         id: organize-tests
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.post-token.outputs.token }}
           JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
         run: |
           set -euo pipefail
@@ -1062,6 +1081,8 @@ jobs:
           cd "${PR_REPO}"
           git config user.email "guyoron1@users.noreply.github.com"
           git config user.name "QualityFlow"
+          git remote set-url origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
 
           # --- Collect Go test files ---
           GO_SRC="outputs/go-tests/${JIRA_TICKET}"
@@ -1133,7 +1154,7 @@ jobs:
       - name: Post pipeline summary
         if: always()
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.post-token.outputs.token }}
           JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
           S1_OUTCOME: ${{ steps.stage1.conclusion || 'skipped' }}
           S2_OUTCOME: ${{ steps.stage2.conclusion || 'skipped' }}
