@@ -1,0 +1,25 @@
+status: error
+jira_id: CNV-76508
+verdict: CANNOT_REVIEW
+confidence: HIGH
+weighted_score: 0
+error: "STD YAML not found — prerequisite STP is missing; std-builder previously failed"
+findings:
+  critical: 1
+  major: 0
+  minor: 0
+  actionable: 1
+  total: 1
+artifacts_reviewed:
+  std_yaml: false
+  go_stubs: false
+  python_stubs: false
+  stp_available: false
+dimension_scores:
+  traceability: 0
+  yaml_structure: 0
+  pattern_matching: 0
+  step_quality: 0
+  content_policy: 0
+  pse_quality: 0
+  codegen_readiness: 0
