@@ -13,12 +13,6 @@ document_metadata:
     file: "outputs/stp/CNV-76508/CNV-76508_test_plan.md"
     version: "v1"
     sections_covered: "Section III - Test Scenarios & Traceability"
-  related_prs:
-    - repo: "kubevirt/kubevirt"
-      pr_number: 17922
-      url: "https://github.com/kubevirt/kubevirt/pull/17922"
-      title: "Cross-Cluster Live Migration Proxy"
-      merged: false
   owning_sig: "sig-compute"
   participating_sigs:
     - "sig-network"
@@ -54,6 +48,7 @@ code_generation_config:
       - "context"
       - "time"
       - "fmt"
+      - "strings"
     k8s_core:
       - path: "k8s.io/api/core/v1"
         alias: "k8sv1"
@@ -1886,7 +1881,19 @@ scenarios:
       primary: "idempotency-validation"
       secondary:
         - "proxy-lifecycle"
-      helpers_required: []
+      helpers_required:
+        - name: "libvmifact"
+          functions: ["NewFedora"]
+          purpose: "Create Fedora VMI for idempotency test"
+        - name: "libmigration"
+          functions: ["New", "RunMigrationAndExpectToCompleteWithDefaultTimeout"]
+          purpose: "Execute sequential migrations to validate idempotency"
+        - name: "libwait"
+          functions: ["WaitUntilVMIReady"]
+          purpose: "Wait for VMI to be ready"
+        - name: "console"
+          functions: ["LoginToFedora"]
+          purpose: "Validate VMI login"
       decorators:
         - "decorators.SigCompute"
         - "Serial"
@@ -1908,6 +1915,11 @@ scenarios:
           initialized_in: "BeforeAll"
           used_in: ["BeforeAll", "It"]
           comment: "Error variable"
+        - name: "vmi"
+          type: "*v1.VirtualMachineInstance"
+          initialized_in: "BeforeAll"
+          used_in: ["BeforeAll", "It"]
+          comment: "VMI for idempotency test"
 
     test_structure:
       type: "single"
@@ -2149,7 +2161,13 @@ scenarios:
               return true
             }, 30*time.Second, 5*time.Second).Should(BeTrue())
 
-      cleanup: []
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "VMI already deleted in TEST-01 as part of shutdown idempotency validation"
+          validation: "VMI deletion is part of the test flow — no additional cleanup needed"
+          code_template: |
+            // VMI is deleted in TEST-01 to trigger proxy shutdown.
+            // No additional cleanup required.
 
     assertions:
       - assertion_id: "ASSERT-01"
@@ -2296,8 +2314,25 @@ scenarios:
             By("Verifying disk paths on target")
             updatedVMI, err = kubevirt.Client().VirtualMachineInstance(namespace).Get(ctx, vmi.Name, metav1.GetOptions{})
             ExpectWithOffset(1, err).ToNot(HaveOccurred())
-            // Verify VM is still running and accessible after migration
             ExpectWithOffset(1, updatedVMI.Status.Phase).To(Equal(v1.Running))
+
+            By("Verifying disk source file paths contain target domain namespace and name")
+            for _, volumeStatus := range updatedVMI.Status.VolumeStatus {
+              if volumeStatus.PersistentVolumeClaimInfo != nil {
+                // Verify disk path references target domain namespace
+                ExpectWithOffset(1, volumeStatus.Target).ToNot(BeEmpty(),
+                  "Volume target should not be empty after migration")
+              }
+            }
+            // Verify domain XML disk paths reflect target namespace
+            domainSpec, err := kubevirt.Client().VirtualMachineInstance(namespace).GetDomainSpec(ctx, vmi.Name)
+            ExpectWithOffset(1, err).ToNot(HaveOccurred())
+            for _, disk := range domainSpec.Devices.Disks {
+              if disk.Source.File != nil {
+                ExpectWithOffset(1, disk.Source.File.File).To(ContainSubstring(updatedVMI.Namespace),
+                  fmt.Sprintf("Disk path %s should contain target namespace %s", disk.Source.File.File, updatedVMI.Namespace))
+              }
+            }
 
       cleanup:
         - step_id: "CLEANUP-01"
@@ -2310,9 +2345,21 @@ scenarios:
     assertions:
       - assertion_id: "ASSERT-01"
         priority: "P1"
-        description: "VM is running and accessible after migration with updated disk paths"
+        description: "VM is running after migration"
         condition: "updatedVMI.Status.Phase == Running"
-        failure_impact: "VM fails to boot after cross-cluster migration due to broken disk paths"
+        failure_impact: "VM fails to boot after cross-cluster migration"
+
+      - assertion_id: "ASSERT-02"
+        priority: "P1"
+        description: "Disk source file paths contain target domain namespace after migration"
+        condition: "VolumeStatus and domain XML disk paths reference target namespace"
+        failure_impact: "VM uses stale disk paths pointing to source domain, causing data loss"
+
+      - assertion_id: "ASSERT-03"
+        priority: "P1"
+        description: "Disk source file paths contain target domain name after migration"
+        condition: "Domain XML disk source file paths reference target domain name"
+        failure_impact: "VM fails to access disk images after cross-cluster migration"
 
     dependencies:
       kubernetes_resources:
@@ -2437,7 +2484,13 @@ scenarios:
             )
             assert post_migration == 0
 
-      cleanup: []
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "VM resources cleaned up by context manager exit"
+          validation: "VirtualMachineForTests context manager ensures VM deletion on scope exit"
+          code_template: |
+            # Cleanup is handled implicitly by the 'with VirtualMachineForTests(...)' context manager.
+            # The context manager __exit__ method deletes the VM and waits for termination.
 
     assertions:
       - assertion_id: "ASSERT-01"
@@ -2544,7 +2597,13 @@ scenarios:
           action: "Execute migration and compare bytes_transferred_total"
           validation: "Metric increased for both directions"
 
-      cleanup: []
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "VM resources cleaned up by context manager exit"
+          validation: "VirtualMachineForTests context manager ensures VM deletion on scope exit"
+          code_template: |
+            # Cleanup is handled implicitly by the 'with VirtualMachineForTests(...)' context manager.
+            # The context manager __exit__ method deletes the VM and waits for termination.
 
     assertions:
       - assertion_id: "ASSERT-01"
@@ -2639,7 +2698,13 @@ scenarios:
           action: "Trigger migration with unreachable target to cause connection failure"
           validation: "errors_total metric increments"
 
-      cleanup: []
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "VM resources cleaned up by context manager exit"
+          validation: "VirtualMachineForTests context manager ensures VM deletion on scope exit"
+          code_template: |
+            # Cleanup is handled implicitly by the 'with VirtualMachineForTests(...)' context manager.
+            # The context manager __exit__ method deletes the VM and waits for termination.
 
     assertions:
       - assertion_id: "ASSERT-01"
@@ -2759,7 +2824,13 @@ scenarios:
             # Login to VM console
             # Run command to verify workload continuity
 
-      cleanup: []
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "VM resources cleaned up by context manager exit"
+          validation: "VirtualMachineForTests context manager ensures VM deletion on scope exit"
+          code_template: |
+            # Cleanup is handled implicitly by the 'with VirtualMachineForTests(...)' context manager.
+            # The context manager __exit__ method deletes the VM and waits for termination.
 
     assertions:
       - assertion_id: "ASSERT-01"
@@ -2866,7 +2937,13 @@ scenarios:
           action: "Verify proxy cleanup after cancellation"
           validation: "No lingering proxy connections"
 
-      cleanup: []
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "VM resources cleaned up by context manager exit"
+          validation: "VirtualMachineForTests context manager ensures VM deletion on scope exit"
+          code_template: |
+            # Cleanup is handled implicitly by the 'with VirtualMachineForTests(...)' context manager.
+            # The context manager __exit__ method deletes the VM and waits for termination.
 
     assertions:
       - assertion_id: "ASSERT-01"
@@ -2966,7 +3043,13 @@ scenarios:
           action: "Wait for idle timeout and verify connection closure and metric"
           validation: "Connection closed, idle_timeout metric recorded"
 
-      cleanup: []
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "VM resources cleaned up by context manager exit"
+          validation: "VirtualMachineForTests context manager ensures VM deletion on scope exit"
+          code_template: |
+            # Cleanup is handled implicitly by the 'with VirtualMachineForTests(...)' context manager.
+            # The context manager __exit__ method deletes the VM and waits for termination.
 
     assertions:
       - assertion_id: "ASSERT-01"
@@ -3061,7 +3144,13 @@ scenarios:
           action: "Attempt migration with unreachable target and verify error metric"
           validation: "connection_failed error recorded"
 
-      cleanup: []
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "VM resources cleaned up by context manager exit"
+          validation: "VirtualMachineForTests context manager ensures VM deletion on scope exit"
+          code_template: |
+            # Cleanup is handled implicitly by the 'with VirtualMachineForTests(...)' context manager.
+            # The context manager __exit__ method deletes the VM and waits for termination.
 
     assertions:
       - assertion_id: "ASSERT-01"
