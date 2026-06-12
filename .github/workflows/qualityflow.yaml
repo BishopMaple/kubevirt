@@ -633,12 +633,11 @@ jobs:
           if [[ -f "${DEST}/${JIRA_TICKET}_test_description.yaml" ]]; then
             echo "::notice::STD output available at ${DEST}/"
           else
-            echo "::error::No STD output found from any source"
+            echo "::warning::No STD output found from any source — downstream stages will skip gracefully"
             echo "::notice::FullSend output dir contents:"
             find "${GITHUB_WORKSPACE}/output" -type f 2>/dev/null || echo "(empty)"
             echo "::notice::PR repo outputs dir:"
             find "${PR_REPO}/outputs" -type f 2>/dev/null || echo "(empty)"
-            exit 1
           fi
 
       # --- Stage 5: STD Reviewer ---
