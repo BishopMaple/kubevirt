@@ -701,6 +701,9 @@ func (s *SynchronizationController) handleTargetState(vmi *virtv1.VirtualMachine
 			if syncIP == "" && s.listener != nil {
 				syncIP = s.listener.Addr().(*net.TCPAddr).IP.String()
 			}
+			if syncIP == "" {
+				return fmt.Errorf("CCLM target proxy: cannot determine local sync IP for migration %s", migrationID)
+			}
 			remappedPorts, err := s.targetProxyManager.OpenProxyPorts(
 				migrationID, syncIP, *targetState.NodeAddress, targetState.DirectMigrationNodePorts,
 			)
@@ -1156,6 +1159,11 @@ func (s *SynchronizationController) SyncTargetMigrationStatus(ctx context.Contex
 			if syncIP == "" && s.listener != nil {
 				syncIP = s.listener.Addr().(*net.TCPAddr).IP.String()
 			}
+			if syncIP == "" {
+				return &syncv1.VMIStatusResponse{
+					Message: fmt.Sprintf("failed to determine local sync IP for migrationID %s", request.MigrationID),
+				}, fmt.Errorf("CCLM source proxy: cannot determine local sync IP for migration %s", migrationID)
+			}
 			remappedPorts, proxyErr := s.sourceProxyManager.OpenProxyPorts(
 				migrationID, syncIP,
 				newVMI.Status.MigrationState.TargetNodeAddress,
@@ -1169,8 +1177,14 @@ func (s *SynchronizationController) SyncTargetMigrationStatus(ctx context.Contex
 			log.Log.Object(newVMI).Infof("CCLM source proxy: remapped ports %v -> %v, address %s -> %s for migration %s",
 				newVMI.Status.MigrationState.TargetDirectMigrationNodePorts, remappedPorts,
 				newVMI.Status.MigrationState.TargetNodeAddress, syncIP, migrationID)
+			// Update both legacy fields and TargetState to maintain consistency
+			// between old-style and new-style migration state consumers.
 			newVMI.Status.MigrationState.TargetNodeAddress = syncIP
 			newVMI.Status.MigrationState.TargetDirectMigrationNodePorts = remappedPorts
+			if newVMI.Status.MigrationState.TargetState != nil {
+				newVMI.Status.MigrationState.TargetState.NodeAddress = &syncIP
+				newVMI.Status.MigrationState.TargetState.DirectMigrationNodePorts = remappedPorts
+			}
 		}
 	}
 

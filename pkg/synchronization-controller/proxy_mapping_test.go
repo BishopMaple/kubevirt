@@ -231,6 +231,28 @@ var _ = Describe("ProxyMapping", func() {
 			}).ToNot(Panic())
 		})
 
+		It("should reject link-local target addresses (SSRF protection)", func() {
+			ports := map[string]int{
+				"49152": 49152,
+			}
+			// Link-local IPv4 (169.254.x.x) — includes cloud metadata endpoint
+			_, err := manager.OpenProxyPorts("test-migration", "127.0.0.1", "169.254.169.254", ports)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("link-local"))
+
+			// Verify no mappings were created
+			Expect(manager.HasMappings("test-migration")).To(BeFalse())
+		})
+
+		It("should reject empty target addresses", func() {
+			ports := map[string]int{
+				"49152": 49152,
+			}
+			_, err := manager.OpenProxyPorts("test-migration", "127.0.0.1", "", ports)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("invalid target address"))
+		})
+
 		It("should handle single migration channel (block only)", func() {
 			targetListener, err := net.Listen("tcp", "127.0.0.1:0")
 			Expect(err).ToNot(HaveOccurred())

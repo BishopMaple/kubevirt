@@ -25,8 +25,21 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"time"
 
 	"kubevirt.io/client-go/log"
+)
+
+const (
+	// maxConnectionsPerProxy limits the number of concurrent connections
+	// per proxy mapping to prevent resource exhaustion.
+	maxConnectionsPerProxy = 64
+	// proxyIdleTimeout is the maximum duration a proxied connection can
+	// remain idle before being terminated.
+	proxyIdleTimeout = 10 * time.Minute
+	// maxAcceptRetries is the number of transient Accept() errors to
+	// tolerate before stopping the proxy listener.
+	maxAcceptRetries = 3
 )
 
 // ProxyMapping stores the mapping between a local proxy port and a remote
@@ -43,6 +56,11 @@ type ProxyMapping struct {
 
 	listener net.Listener
 	stopChan chan struct{}
+	// connSem limits concurrent connections per proxy mapping.
+	connSem chan struct{}
+	// activeConns tracks open connections for explicit cleanup during Close.
+	activeConns   []net.Conn
+	activeConnsMu sync.Mutex
 }
 
 // ProxyMappingManager manages proxy port mappings for CCLM migrations,
@@ -60,14 +78,69 @@ func NewProxyMappingManager() *ProxyMappingManager {
 	}
 }
 
+// validateTargetAddress checks that the target address is not a prohibited
+// destination (cloud metadata endpoints, link-local addresses).
+func validateTargetAddress(address string) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		// address might not have a port; try parsing as plain host
+		host = address
+	}
+	if host == "" {
+		return fmt.Errorf("empty target address")
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// Could be a hostname — resolve it to check the IP
+		addrs, err := net.LookupHost(host)
+		if err != nil {
+			return fmt.Errorf("cannot resolve target host %q: %v", host, err)
+		}
+		for _, addr := range addrs {
+			if err := validateIP(net.ParseIP(addr)); err != nil {
+				return fmt.Errorf("resolved address %s for host %q is prohibited: %v", addr, host, err)
+			}
+		}
+		return nil
+	}
+	return validateIP(ip)
+}
+
+// validateIP checks an IP against prohibited ranges.
+func validateIP(ip net.IP) error {
+	if ip == nil {
+		return fmt.Errorf("nil IP address")
+	}
+	// Block link-local IPv4 (169.254.0.0/16) — includes cloud metadata 169.254.169.254
+	linkLocal4 := net.IPNet{IP: net.ParseIP("169.254.0.0"), Mask: net.CIDRMask(16, 32)}
+	if linkLocal4.Contains(ip) {
+		return fmt.Errorf("link-local IPv4 address %s is not allowed", ip)
+	}
+	// Block link-local IPv6 (fe80::/10)
+	linkLocal6 := net.IPNet{IP: net.ParseIP("fe80::"), Mask: net.CIDRMask(10, 128)}
+	if linkLocal6.Contains(ip) {
+		return fmt.Errorf("link-local IPv6 address %s is not allowed", ip)
+	}
+	return nil
+}
+
 // OpenProxyPorts opens local TCP proxy ports for CCLM migration data
 // multiplexing. For each entry in the port map (destPort -> srcPort),
 // it opens a new TCP listener on bindAddress and sets up forwarding to
 // targetAddress:destPort.
 //
+// The targetAddress is validated against prohibited ranges (link-local,
+// cloud metadata endpoints) to prevent SSRF attacks.
+//
 // Returns a new port map where keys are the newly opened local ports
 // (as strings) and values are the original virt-handler ports.
 func (m *ProxyMappingManager) OpenProxyPorts(migrationID string, bindAddress string, targetAddress string, ports map[string]int) (map[string]int, error) {
+	// Validate target address before acquiring lock
+	if err := validateTargetAddress(targetAddress); err != nil {
+		return nil, fmt.Errorf("CCLM proxy: invalid target address %q: %v", targetAddress, err)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -96,6 +169,7 @@ func (m *ProxyMappingManager) OpenProxyPorts(migrationID string, bindAddress str
 			VirtHandlerPort: srcPort,
 			listener:        listener,
 			stopChan:        make(chan struct{}),
+			connSem:         make(chan struct{}, maxConnectionsPerProxy),
 		}
 		go pm.serve()
 
@@ -155,9 +229,35 @@ func (pm *ProxyMapping) Close() {
 	if pm.listener != nil {
 		pm.listener.Close()
 	}
+	// Explicitly close all tracked active connections so io.Copy goroutines
+	// unblock immediately rather than waiting for the remote side to close.
+	pm.activeConnsMu.Lock()
+	for _, conn := range pm.activeConns {
+		conn.Close()
+	}
+	pm.activeConns = nil
+	pm.activeConnsMu.Unlock()
+}
+
+func (pm *ProxyMapping) trackConn(conn net.Conn) {
+	pm.activeConnsMu.Lock()
+	pm.activeConns = append(pm.activeConns, conn)
+	pm.activeConnsMu.Unlock()
+}
+
+func (pm *ProxyMapping) untrackConn(conn net.Conn) {
+	pm.activeConnsMu.Lock()
+	for i, c := range pm.activeConns {
+		if c == conn {
+			pm.activeConns = append(pm.activeConns[:i], pm.activeConns[i+1:]...)
+			break
+		}
+	}
+	pm.activeConnsMu.Unlock()
 }
 
 func (pm *ProxyMapping) serve() {
+	consecutiveErrors := 0
 	for {
 		conn, err := pm.listener.Accept()
 		if err != nil {
@@ -165,23 +265,51 @@ func (pm *ProxyMapping) serve() {
 			case <-pm.stopChan:
 				return
 			default:
-				log.Log.Reason(err).Errorf("CCLM proxy: accept error on port %d", pm.SourcePort)
-				return
+				consecutiveErrors++
+				if consecutiveErrors >= maxAcceptRetries {
+					log.Log.Reason(err).Errorf("CCLM proxy: %d consecutive accept errors on port %d, stopping listener",
+						consecutiveErrors, pm.SourcePort)
+					return
+				}
+				log.Log.Reason(err).Warningf("CCLM proxy: transient accept error on port %d (%d/%d)",
+					pm.SourcePort, consecutiveErrors, maxAcceptRetries)
+				continue
 			}
 		}
-		go pm.handleConnection(conn)
+		consecutiveErrors = 0
+
+		// Enforce max concurrent connections
+		select {
+		case pm.connSem <- struct{}{}:
+			go func() {
+				defer func() { <-pm.connSem }()
+				pm.handleConnection(conn)
+			}()
+		default:
+			log.Log.Warningf("CCLM proxy: max connections (%d) reached on port %d, rejecting",
+				maxConnectionsPerProxy, pm.SourcePort)
+			conn.Close()
+		}
 	}
 }
 
 func (pm *ProxyMapping) handleConnection(src net.Conn) {
-	defer src.Close()
+	pm.trackConn(src)
+	defer func() {
+		pm.untrackConn(src)
+		src.Close()
+	}()
 
 	dst, err := net.Dial("tcp", pm.TargetAddr)
 	if err != nil {
 		log.Log.Reason(err).Errorf("CCLM proxy: failed to connect to %s", pm.TargetAddr)
 		return
 	}
-	defer dst.Close()
+	pm.trackConn(dst)
+	defer func() {
+		pm.untrackConn(dst)
+		dst.Close()
+	}()
 
 	outboundErr := make(chan error, 1)
 	inboundErr := make(chan error, 1)
