@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -1259,6 +1260,166 @@ var _ = Describe("VMI status synchronization controller", func() {
 			})
 			Expect(err).ToNot(HaveOccurred())
 			Expect(res.Message).To(Equal("migration canceled"))
+		})
+	})
+
+	Context("CCLM proxy multiplexing", func() {
+		Context("target-side proxy port opening", func() {
+			It("should open CCLM proxy ports via ProxyMappingManager for target migration", func() {
+				// Create a mock target virt-handler listener
+				virtHandlerListener, err := net.Listen("tcp", "127.0.0.1:0")
+				Expect(err).ToNot(HaveOccurred())
+				defer virtHandlerListener.Close()
+				virtHandlerPort := virtHandlerListener.Addr().(*net.TCPAddr).Port
+
+				migrationID := testMigrationID
+				ports := map[string]int{
+					strconv.Itoa(virtHandlerPort): 49152,
+				}
+
+				// Open CCLM target proxy ports
+				remappedPorts, err := controller.targetProxyManager.OpenProxyPorts(
+					migrationID, "127.0.0.1", "127.0.0.1", ports,
+				)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(remappedPorts).To(HaveLen(1))
+				Expect(controller.targetProxyManager.HasMappings(migrationID)).To(BeTrue())
+
+				// Verify remapped ports preserve the virt-handler port value
+				for _, vhPort := range remappedPorts {
+					Expect(vhPort).To(Equal(49152))
+				}
+
+				// Verify the proxy port is different from the original
+				for proxyPort := range remappedPorts {
+					Expect(proxyPort).ToNot(Equal(strconv.Itoa(virtHandlerPort)))
+				}
+			})
+
+			It("should open CCLM proxy ports for both block and state migration channels", func() {
+				virtHandlerListener1, err := net.Listen("tcp", "127.0.0.1:0")
+				Expect(err).ToNot(HaveOccurred())
+				defer virtHandlerListener1.Close()
+				virtHandlerListener2, err := net.Listen("tcp", "127.0.0.1:0")
+				Expect(err).ToNot(HaveOccurred())
+				defer virtHandlerListener2.Close()
+
+				ports := map[string]int{
+					strconv.Itoa(virtHandlerListener1.Addr().(*net.TCPAddr).Port): 49152,
+					strconv.Itoa(virtHandlerListener2.Addr().(*net.TCPAddr).Port): 49153,
+				}
+
+				remappedPorts, err := controller.targetProxyManager.OpenProxyPorts(
+					testMigrationID, "127.0.0.1", "127.0.0.1", ports,
+				)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(remappedPorts).To(HaveLen(2))
+
+				// Verify both virt-handler ports are present
+				virtHandlerPorts := make(map[int]bool)
+				for _, vhPort := range remappedPorts {
+					virtHandlerPorts[vhPort] = true
+				}
+				Expect(virtHandlerPorts).To(HaveKey(49152))
+				Expect(virtHandlerPorts).To(HaveKey(49153))
+			})
+		})
+
+		Context("source-side proxy in SyncTargetMigrationStatus", func() {
+			It("should open source proxy ports and remap legacy fields for decentralized migration", func() {
+				sourceVMI := libvmi.New(libvmi.WithNamespace(k8sv1.NamespaceDefault))
+				err := controller.vmiInformer.GetStore().Add(sourceVMI)
+				Expect(err).ToNot(HaveOccurred())
+				_, err = controller.client.VirtualMachineInstance(sourceVMI.Namespace).Create(context.Background(), sourceVMI, metav1.CreateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Create source migration (with SendTo)
+				sourceMigration := createSourceMigration(testMigrationID, sourceVMI.Name, "", k8sv1.NamespaceDefault)
+				err = controller.migrationInformer.GetStore().Add(sourceMigration)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Set up a mock CCLM target listener (simulating what the target sync controller would open)
+				cclmListener, err := net.Listen("tcp", "127.0.0.1:0")
+				Expect(err).ToNot(HaveOccurred())
+				defer cclmListener.Close()
+				cclmPort := cclmListener.Addr().(*net.TCPAddr).Port
+
+				// Create a gRPC listener for the controller to determine its IP
+				localTCPConn, err := controller.createTcpListener()
+				Expect(err).ToNot(HaveOccurred())
+				defer localTCPConn.Close()
+
+				// Simulate target state with CCLM-remapped ports
+				nodeAddr := "127.0.0.1"
+				remoteStatus := &virtv1.VirtualMachineInstanceStatus{
+					MigrationState: &virtv1.VirtualMachineInstanceMigrationState{
+						TargetState: &virtv1.VirtualMachineInstanceMigrationTargetState{
+							VirtualMachineInstanceCommonMigrationState: virtv1.VirtualMachineInstanceCommonMigrationState{
+								Node: "target-node",
+							},
+							NodeAddress: &nodeAddr,
+							DirectMigrationNodePorts: map[string]int{
+								strconv.Itoa(cclmPort): 49152,
+							},
+						},
+						SourceState: &virtv1.VirtualMachineInstanceMigrationSourceState{
+							VirtualMachineInstanceCommonMigrationState: virtv1.VirtualMachineInstanceCommonMigrationState{
+								Node: "source-node",
+							},
+						},
+					},
+				}
+
+				vmiStatusJson, err := json.Marshal(remoteStatus)
+				Expect(err).ToNot(HaveOccurred())
+				request := &syncv1.VMIStatusRequest{
+					MigrationID: testMigrationID,
+					VmiStatus: &syncv1.VMIStatus{
+						VmiStatusJson: vmiStatusJson,
+					},
+				}
+
+				resp, err := controller.SyncTargetMigrationStatus(context.TODO(), request)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(resp.Message).To(Equal(successMessage))
+
+				// Verify source proxy mappings were created
+				Expect(controller.sourceProxyManager.HasMappings(testMigrationID)).To(BeTrue())
+
+				// Verify the VMI was updated with source proxy ports (not CCLM ports)
+				updatedVMI, err := controller.client.VirtualMachineInstance(sourceVMI.Namespace).Get(context.Background(), sourceVMI.Name, metav1.GetOptions{})
+				Expect(err).ToNot(HaveOccurred())
+				Expect(updatedVMI.Status.MigrationState).ToNot(BeNil())
+				// The legacy TargetDirectMigrationNodePorts should have been remapped
+				Expect(updatedVMI.Status.MigrationState.TargetDirectMigrationNodePorts).ToNot(BeNil())
+				for localPort, vhPort := range updatedVMI.Status.MigrationState.TargetDirectMigrationNodePorts {
+					Expect(vhPort).To(Equal(49152))
+					// The local port should NOT be the original CCLM port
+					localPortInt, _ := strconv.Atoi(localPort)
+					Expect(localPortInt).ToNot(Equal(cclmPort))
+				}
+			})
+		})
+
+		It("should clean up proxy mappings when migration is deleted", func() {
+			targetMigration := createTargetMigration(testMigrationID, "test-vmi", k8sv1.NamespaceDefault)
+
+			// Create some proxy mappings
+			targetListener, err := net.Listen("tcp", "127.0.0.1:0")
+			Expect(err).ToNot(HaveOccurred())
+			defer targetListener.Close()
+			ports := map[string]int{
+				strconv.Itoa(targetListener.Addr().(*net.TCPAddr).Port): 49152,
+			}
+			_, err = controller.targetProxyManager.OpenProxyPorts(testMigrationID, "127.0.0.1", "127.0.0.1", ports)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(controller.targetProxyManager.HasMappings(testMigrationID)).To(BeTrue())
+
+			// Delete the migration
+			controller.deleteMigrationFunc(targetMigration)
+
+			// Verify proxy mappings were cleaned up
+			Expect(controller.targetProxyManager.HasMappings(testMigrationID)).To(BeFalse())
 		})
 	})
 
