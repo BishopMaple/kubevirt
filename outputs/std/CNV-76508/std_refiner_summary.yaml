@@ -1,0 +1,14 @@
+status: error
+jira_id: CNV-76508
+error: "STD artifacts not found — prerequisite STP is missing; std-builder previously failed"
+initial_verdict: CANNOT_REVIEW
+final_verdict: CANNOT_REVIEW
+iterations: 0
+findings:
+  initial: {critical: 1, major: 0, minor: 0}
+  final: {critical: 1, major: 0, minor: 0}
+artifacts_refined:
+  std_yaml: false
+  go_stubs: false
+  python_stubs: false
+resolution: "Run stp-builder first, then std-builder, then re-run std-refiner"
