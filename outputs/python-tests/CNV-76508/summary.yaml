@@ -1,0 +1,53 @@
+status: success
+jira_id: CNV-76508
+jira_summary: "Cross-Cluster Live Migration Network Proxy"
+std_source: "outputs/std/CNV-76508/CNV-76508_test_description.yaml"
+total_std_scenarios: 20
+tier2_scenarios: 7
+tier1_scenarios: 13
+test_files:
+  - test_cross_cluster_migration_proxy_metrics.py
+  - test_cross_cluster_migration_proxy_functionality.py
+  - test_cross_cluster_migration_proxy_edge_cases.py
+  - conftest.py
+test_count: 7
+scenario_coverage:
+  - scenario_id: "008"
+    test_id: "TS-CNV-76508-008"
+    test_function: "test_proxy_active_connections_increments_during_migration_and_decrements_after"
+    file: "test_cross_cluster_migration_proxy_metrics.py"
+    class: "TestCrossClusterMigrationProxyMetrics"
+  - scenario_id: "009"
+    test_id: "TS-CNV-76508-009"
+    test_function: "test_proxy_bytes_transferred_total_records_bidirectional_data"
+    file: "test_cross_cluster_migration_proxy_metrics.py"
+    class: "TestCrossClusterMigrationProxyMetrics"
+  - scenario_id: "010"
+    test_id: "TS-CNV-76508-010"
+    test_function: "test_proxy_errors_total_increments_on_connection_failure"
+    file: "test_cross_cluster_migration_proxy_metrics.py"
+    class: "TestCrossClusterMigrationProxyMetrics"
+  - scenario_id: "014"
+    test_id: "TS-CNV-76508-014"
+    test_function: "test_vm_functional_after_proxy_migration_login_and_workload_continue"
+    file: "test_cross_cluster_migration_proxy_functionality.py"
+    class: "TestCrossClusterMigrationProxyFunctionality"
+  - scenario_id: "015"
+    test_id: "TS-CNV-76508-015"
+    test_function: "test_migration_cancellation_cleanly_shuts_down_proxy_connections"
+    file: "test_cross_cluster_migration_proxy_functionality.py"
+    class: "TestCrossClusterMigrationProxyFunctionality"
+  - scenario_id: "016"
+    test_id: "TS-CNV-76508-016"
+    test_function: "test_proxy_closes_idle_connections_after_timeout_and_records_metric"
+    file: "test_cross_cluster_migration_proxy_edge_cases.py"
+    class: "TestCrossClusterMigrationProxyEdgeCases"
+  - scenario_id: "017"
+    test_id: "TS-CNV-76508-017"
+    test_function: "test_proxy_records_connection_failed_metric_when_target_unreachable"
+    file: "test_cross_cluster_migration_proxy_edge_cases.py"
+    class: "TestCrossClusterMigrationProxyEdgeCases"
+lsp_patterns_used: false
+conftest_generated: true
+total_lines_of_code: 711
+generated_date: "2026-06-12"
