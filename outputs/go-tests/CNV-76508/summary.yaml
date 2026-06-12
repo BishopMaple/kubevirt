@@ -1,0 +1,50 @@
+status: success
+jira_id: CNV-76508
+std_source: outputs/std/CNV-76508/CNV-76508_test_description.yaml
+test_files:
+  - cross_cluster_proxy_config_test.go
+  - cross_cluster_proxy_migration_test.go
+  - cross_cluster_proxy_lifecycle_test.go
+test_count: 13
+total_lines: 799
+lsp_patterns_used: false
+pattern_source: config/projects/cnv/patterns/tier1_patterns.yaml
+coverage_validation:
+  std_tier1_scenarios: 13
+  generated_test_cases: 13
+  coverage: "100%"
+  scenario_mapping:
+    TS-CNV-76508-001: cross_cluster_proxy_config_test.go
+    TS-CNV-76508-002: cross_cluster_proxy_migration_test.go
+    TS-CNV-76508-003: cross_cluster_proxy_migration_test.go
+    TS-CNV-76508-004: cross_cluster_proxy_migration_test.go
+    TS-CNV-76508-005: cross_cluster_proxy_migration_test.go
+    TS-CNV-76508-006: cross_cluster_proxy_config_test.go
+    TS-CNV-76508-007: cross_cluster_proxy_config_test.go
+    TS-CNV-76508-011: cross_cluster_proxy_lifecycle_test.go
+    TS-CNV-76508-012: cross_cluster_proxy_lifecycle_test.go
+    TS-CNV-76508-013: cross_cluster_proxy_config_test.go
+    TS-CNV-76508-018: cross_cluster_proxy_lifecycle_test.go
+    TS-CNV-76508-019: cross_cluster_proxy_lifecycle_test.go
+    TS-CNV-76508-020: cross_cluster_proxy_lifecycle_test.go
+file_details:
+  - name: cross_cluster_proxy_config_test.go
+    lines: 254
+    test_count: 4
+    scenarios: ["001", "006", "007", "013"]
+    description: "Configuration and API field validation tests"
+  - name: cross_cluster_proxy_migration_test.go
+    lines: 252
+    test_count: 4
+    scenarios: ["002", "003", "004", "005"]
+    description: "Migration flow and proxy port map tests"
+  - name: cross_cluster_proxy_lifecycle_test.go
+    lines: 293
+    test_count: 5
+    scenarios: ["011", "012", "018", "019", "020"]
+    description: "Lifecycle, cleanup, backward compatibility, and idempotency tests"
+project_context:
+  project_id: cnv
+  package_name: compute
+  framework: ginkgo-v2
+  owning_sig: sig-compute
