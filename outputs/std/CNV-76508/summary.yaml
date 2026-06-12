@@ -9,18 +9,12 @@ test_counts:
 stubs:
   go: 13
   python: 7
-go_files:
-  - cross_cluster_migration_proxy_stubs_test.go
-  - cross_cluster_migration_proxy_api_stubs_test.go
-  - cross_cluster_migration_proxy_lifecycle_stubs_test.go
-  - cross_cluster_migration_proxy_compat_stubs_test.go
-python_files:
-  - test_cross_cluster_migration_proxy_metrics_stubs.py
-  - test_cross_cluster_migration_proxy_functionality_stubs.py
-  - test_cross_cluster_migration_proxy_edge_cases_stubs.py
-priority_breakdown:
-  p0: 7
-  p1: 9
-  p2: 4
-generated_date: "2026-06-12"
-std_version: "2.1-enhanced"
+generation_details:
+  std_version: "2.1-enhanced"
+  go_stub_files:
+    - go-tests/cross_cluster_migration_proxy_stubs_test.go
+  python_stub_files:
+    - python-tests/test_cross_cluster_migration_proxy_metrics_stubs.py
+    - python-tests/test_cross_cluster_migration_proxy_functionality_stubs.py
+  phase: phase1
+  generated_date: "2026-06-12"
