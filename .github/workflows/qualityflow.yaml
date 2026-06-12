@@ -292,18 +292,43 @@ jobs:
 
       - name: Stage handoff — copy STP output into PR repo
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           JIRA_TICKET: ${{ steps.jira.outputs.jira_ticket }}
         run: |
           set -euo pipefail
-          STP_FILE=$(find "${GITHUB_WORKSPACE}/output" -name "${JIRA_TICKET}_test_plan.md" -type f | head -1)
-          if [[ -z "${STP_FILE}" ]]; then
-            echo "::error::STP output not found after Stage 1"
-            exit 1
+          PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
+          HEAD_REF="${{ steps.pr-info.outputs.head_ref }}"
+          DEST="${PR_REPO}/outputs/stp/${JIRA_TICKET}"
+
+          # First, pull any agent-pushed STP from git
+          git -C "${PR_REPO}" remote set-url origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git -C "${PR_REPO}" fetch origin "${HEAD_REF}" 2>/dev/null || true
+          git -C "${PR_REPO}" reset --hard "origin/${HEAD_REF}" 2>/dev/null || true
+
+          # Check if agent already pushed the STP
+          if [[ -f "${DEST}/${JIRA_TICKET}_test_plan.md" ]]; then
+            echo "::notice::STP already on PR branch (agent pushed successfully)"
+          else
+            # Fallback: recover from FullSend extraction and commit+push
+            STP_FILE=$(find "${GITHUB_WORKSPACE}/output" -name "${JIRA_TICKET}_test_plan.md" -type f | head -1)
+            if [[ -z "${STP_FILE}" ]]; then
+              echo "::error::STP output not found after Stage 1"
+              exit 1
+            fi
+            mkdir -p "${DEST}"
+            cp "${STP_FILE}" "${DEST}/"
+            # Also grab summary if available
+            SUMMARY=$(find "${GITHUB_WORKSPACE}/output" -path "*/stp-builder*/summary.yaml" -type f | head -1)
+            [[ -n "${SUMMARY}" ]] && cp "${SUMMARY}" "${DEST}/"
+
+            git -C "${PR_REPO}" config user.email "qualityflow[bot]@users.noreply.github.com"
+            git -C "${PR_REPO}" config user.name "QualityFlow"
+            git -C "${PR_REPO}" add "outputs/stp/${JIRA_TICKET}/"
+            git -C "${PR_REPO}" commit -m "Add STP output for ${JIRA_TICKET} [skip ci]" || true
+            git -C "${PR_REPO}" push origin "HEAD:${HEAD_REF}" || echo "::warning::STP push failed — downstream stages may not find STP"
+            echo "::notice::STP recovered from FullSend extraction and pushed to PR branch"
           fi
-          DEST="${GITHUB_WORKSPACE}/pr-repo/outputs/stp/${JIRA_TICKET}"
-          mkdir -p "${DEST}"
-          cp "${STP_FILE}" "${DEST}/"
-          echo "::notice::Copied STP to ${DEST}/${JIRA_TICKET}_test_plan.md"
 
       # --- Stage 2: STP Reviewer ---
 
@@ -612,32 +637,41 @@ jobs:
         run: |
           set -euo pipefail
           PR_REPO="${GITHUB_WORKSPACE}/pr-repo"
+          HEAD_REF="${{ steps.pr-info.outputs.head_ref }}"
           DEST="${PR_REPO}/outputs/std/${JIRA_TICKET}"
 
-          # Source 1: FullSend extraction (works if sandbox gRPC was alive)
-          STD_FILE=$(find "${GITHUB_WORKSPACE}/output" -name "${JIRA_TICKET}_test_description.yaml" -type f 2>/dev/null | head -1)
-          if [[ -n "${STD_FILE}" ]]; then
-            mkdir -p "${DEST}" "${DEST}/go-tests" "${DEST}/python-tests"
-            cp "${STD_FILE}" "${DEST}/"
-            for stub in $(find "${GITHUB_WORKSPACE}/output" -name "*_stubs_test.go" -o -name "test_*_stubs.py" 2>/dev/null); do
-              if [[ "${stub}" == *_test.go ]]; then
-                cp "${stub}" "${DEST}/go-tests/"
-              else
-                cp "${stub}" "${DEST}/python-tests/"
-              fi
-            done
-            echo "::notice::STD recovered from FullSend extraction"
-          fi
-
-          # Source 2: Agent pushed to PR branch (already in restored pr-repo)
+          # Check if agent already pushed the STD
           if [[ -f "${DEST}/${JIRA_TICKET}_test_description.yaml" ]]; then
-            echo "::notice::STD output available at ${DEST}/"
+            echo "::notice::STD already on PR branch (agent pushed successfully)"
           else
-            echo "::warning::No STD output found from any source — downstream stages will skip gracefully"
-            echo "::notice::FullSend output dir contents:"
-            find "${GITHUB_WORKSPACE}/output" -type f 2>/dev/null || echo "(empty)"
-            echo "::notice::PR repo outputs dir:"
-            find "${PR_REPO}/outputs" -type f 2>/dev/null || echo "(empty)"
+            # Fallback: recover from FullSend extraction and commit+push
+            STD_FILE=$(find "${GITHUB_WORKSPACE}/output" -name "${JIRA_TICKET}_test_description.yaml" -type f 2>/dev/null | head -1)
+            if [[ -n "${STD_FILE}" ]]; then
+              mkdir -p "${DEST}" "${DEST}/go-tests" "${DEST}/python-tests"
+              cp "${STD_FILE}" "${DEST}/"
+              for stub in $(find "${GITHUB_WORKSPACE}/output" -name "*_stubs_test.go" -o -name "test_*_stubs.py" 2>/dev/null); do
+                if [[ "${stub}" == *_test.go ]]; then
+                  cp "${stub}" "${DEST}/go-tests/"
+                else
+                  cp "${stub}" "${DEST}/python-tests/"
+                fi
+              done
+
+              git -C "${PR_REPO}" remote set-url origin \
+                "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+              git -C "${PR_REPO}" config user.email "qualityflow[bot]@users.noreply.github.com"
+              git -C "${PR_REPO}" config user.name "QualityFlow"
+              git -C "${PR_REPO}" add "outputs/std/${JIRA_TICKET}/"
+              git -C "${PR_REPO}" commit -m "Add STD output for ${JIRA_TICKET} [skip ci]" || true
+              git -C "${PR_REPO}" push origin "HEAD:${HEAD_REF}" || echo "::warning::STD push failed"
+              echo "::notice::STD recovered from FullSend extraction and pushed to PR branch"
+            else
+              echo "::warning::No STD output found from any source — downstream stages will skip gracefully"
+              echo "::notice::FullSend output dir contents:"
+              find "${GITHUB_WORKSPACE}/output" -type f 2>/dev/null || echo "(empty)"
+              echo "::notice::PR repo outputs dir:"
+              find "${PR_REPO}/outputs" -type f 2>/dev/null || echo "(empty)"
+            fi
           fi
 
       # --- Stage 5: STD Reviewer ---
