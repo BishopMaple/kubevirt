@@ -1,0 +1,27 @@
+status: success
+jira_id: CNV-76508
+std_source: outputs/std/CNV-76508/CNV-76508_test_description.yaml
+test_files:
+  - test_cclm_proxy_migration.py
+  - conftest.py
+test_count: 1
+tier2_scenarios_in_std: 1
+tier2_test_functions_generated: 1
+coverage: "100%"
+lsp_patterns_used: false
+conftest_generated: true
+scenario_mapping:
+  - scenario_id: "TS-CNV-76508-012"
+    test_function: "test_e2e_migration_through_proxy"
+    test_file: "test_cclm_proxy_migration.py"
+    tier: "Tier 2"
+    priority: "P0"
+validation:
+  syntax_check: passed
+  coverage_check: passed
+  pattern: "migration"
+notes:
+  - "Source repo not available - LSP analysis skipped, used pattern library fallback"
+  - "Single Tier 2 scenario (TS-CNV-76508-012) - E2E cross-cluster migration through proxy"
+  - "Polarion marker included (polarion toggle is true for CNV project)"
+  - "AGENTS.md rules applied: noun fixtures, context managers, TimeoutSampler, absolute imports"
