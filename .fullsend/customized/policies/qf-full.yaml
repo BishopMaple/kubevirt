@@ -72,6 +72,7 @@ network_policies:
         access: read-write
     binaries:
       - path: "**/gh"
+      - path: "**/git"
       - path: "**/curl"
 
   github_oidc:
