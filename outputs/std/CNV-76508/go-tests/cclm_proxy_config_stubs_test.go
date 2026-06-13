@@ -2,6 +2,8 @@ package network
 
 import (
 	. "github.com/onsi/ginkgo/v2"
+
+	"kubevirt.io/kubevirt/tests/decorators"
 )
 
 /*

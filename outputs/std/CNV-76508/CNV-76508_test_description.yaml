@@ -30,8 +30,8 @@ document_metadata:
   tier_1_count: 11
   tier_2_count: 1
   p0_count: 8
-  p1_count: 7
-  p2_count: 2
+  p1_count: 8
+  p2_count: 1
 
 ---
 code_generation_config:
@@ -1242,7 +1242,7 @@ scenarios:
       setup:
         - step_id: "SETUP-01"
           action: "Label specific worker nodes with cclm-network=true"
-          command: "oc label node worker-0 cclm-network=true"
+          command: "targetNode := getWorkerNodes()[0]; oc label node ${targetNode} cclm-network=true"
           validation: "Node labeled"
       test_execution:
         - step_id: "TEST-01"
@@ -1264,7 +1264,7 @@ scenarios:
       cleanup:
         - step_id: "CLEANUP-01"
           action: "Remove node labels and restore KubeVirt CR"
-          command: "oc label node worker-0 cclm-network-; restore KubeVirt CR"
+          command: "oc label node ${targetNode} cclm-network-; restore KubeVirt CR"
 
     assertions:
       - assertion_id: "ASSERT-01"
@@ -1846,8 +1846,8 @@ scenarios:
           command: "Create VirtualMachineInstanceMigration"
           validation: "Migration starts with proxy"
         - step_id: "TEST-02"
-          action: "Induce migration failure (e.g., target node becomes unavailable)"
-          command: "Cordon target node or disrupt network"
+          action: "Induce migration failure by cordoning the target node"
+          command: "oc adm cordon ${targetNode} && oc delete pod -l kubevirt.io=virt-handler --field-selector spec.nodeName=${targetNode}"
           validation: "Migration enters Failed state"
         - step_id: "TEST-03"
           action: "Verify proxy ports are cleaned up on both source and target"

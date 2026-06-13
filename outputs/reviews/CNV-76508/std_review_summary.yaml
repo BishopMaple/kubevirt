@@ -1,24 +1,24 @@
 status: success
 jira_id: CNV-76508
-verdict: APPROVED_WITH_FINDINGS
+verdict: APPROVED
 confidence: HIGH
-weighted_score: 88
+weighted_score: 95
 findings:
   critical: 0
-  major: 2
-  minor: 13
-  actionable: 12
-  total: 15
+  major: 0
+  minor: 8
+  actionable: 3
+  total: 8
 artifacts_reviewed:
   std_yaml: true
   go_stubs: true
   python_stubs: true
   stp_available: true
 dimension_scores:
-  traceability: 90
-  yaml_structure: 85
-  pattern_matching: 85
-  step_quality: 90
-  content_policy: 92
-  pse_quality: 88
-  codegen_readiness: 82
+  traceability: 95
+  yaml_structure: 93
+  pattern_matching: 90
+  step_quality: 93
+  content_policy: 90
+  pse_quality: 95
+  codegen_readiness: 88
