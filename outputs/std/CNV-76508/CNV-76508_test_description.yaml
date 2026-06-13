@@ -1,0 +1,2646 @@
+---
+# Software Test Description (STD) - Comprehensive Format
+# Generated: 2026-06-13
+# Version: 2.1-enhanced
+
+document_metadata:
+  std_version: "2.1-enhanced"
+  generated_date: "2026-06-13"
+  jira_issue: "CNV-76508"
+  jira_summary: "Synchronization controller connection multiplexing - Cross-Cluster Live Migration Network Proxy"
+  source_bugs: []
+
+  stp_reference:
+    file: "outputs/stp/CNV-76508/CNV-76508_test_plan.md"
+    version: "v1"
+    sections_covered: "Section III - Requirements-to-Tests Mapping"
+
+  related_prs:
+    - repo: "kubevirt/kubevirt"
+      pr_number: 17922
+      url: "https://github.com/kubevirt/kubevirt/pull/17922"
+      title: "Add TCP proxy support to synchronization controller for CCLM"
+      merged: false
+
+  owning_sig: "sig-network"
+  participating_sigs: ["sig-compute", "sig-storage", "sig-migration"]
+
+  total_scenarios: 17
+  unit_count: 5
+  tier_1_count: 11
+  tier_2_count: 1
+  p0_count: 8
+  p1_count: 7
+  p2_count: 2
+
+---
+code_generation_config:
+  std_version: "2.1-enhanced"
+  framework: "ginkgo-v2"
+  assertion_library: "gomega"
+  language: "go"
+  package_name: "network"
+  context_init:
+    - statement: "ctx := context.Background()"
+      variable: "ctx"
+      type: "context.Context"
+    - statement: "namespace := testsuite.GetTestNamespace(nil)"
+      variable: "namespace"
+      type: "string"
+  imports:
+    dot_imports:
+      - "github.com/onsi/ginkgo/v2"
+      - "github.com/onsi/gomega"
+    standard:
+      - "context"
+      - "fmt"
+      - "net"
+      - "time"
+    project_api:
+      - path: "kubevirt.io/api/core/v1"
+        alias: "v1"
+    k8s_core:
+      - path: "k8s.io/api/core/v1"
+        alias: "k8sv1"
+      - path: "k8s.io/apimachinery/pkg/apis/meta/v1"
+        alias: "metav1"
+    test_framework:
+      - "kubevirt.io/kubevirt/tests/decorators"
+      - "kubevirt.io/kubevirt/tests/framework/kubevirt"
+      - "kubevirt.io/kubevirt/tests/testsuite"
+      - "kubevirt.io/kubevirt/tests/libvmi"
+  timeout_constants:
+    small: "StartupTimeoutSecondsSmall"
+    medium: "StartupTimeoutSecondsMedium"
+    large: "StartupTimeoutSecondsLarge"
+    migration: "MigrationWaitTime"
+  helper_library_imports:
+    libvmifact: "kubevirt.io/kubevirt/tests/libvmifact"
+    libnet: "kubevirt.io/kubevirt/tests/libnet"
+    libwait: "kubevirt.io/kubevirt/tests/libwait"
+    libpod: "kubevirt.io/kubevirt/tests/libpod"
+    libvmops: "kubevirt.io/kubevirt/tests/libvmops"
+    libmigration: "kubevirt.io/kubevirt/tests/libmigration"
+    console: "kubevirt.io/kubevirt/tests/console"
+    matcher: "kubevirt.io/kubevirt/tests/framework/matcher"
+
+---
+common_preconditions:
+  infrastructure:
+    - name: "OpenShift cluster"
+      requirement: "OCP 4.22+ with OVN-Kubernetes CNI"
+      validation: "oc version"
+
+    - name: "OpenShift Virtualization"
+      requirement: "CNV 4.22+"
+      validation: "oc get csv -n openshift-cnv | grep kubevirt-hyperconverged"
+
+    - name: "Multi-cluster topology"
+      requirement: "2 clusters with separate in-cluster and cross-cluster LM networks"
+      validation: "oc get nodes on both clusters"
+
+    - name: "Multus CNI"
+      requirement: "Multus enabled for secondary network attachments"
+      validation: "oc get pods -n openshift-multus -l app=multus"
+
+    - name: "DecentralizedLiveMigration feature gate"
+      requirement: "Feature gate enabled in KubeVirt CR"
+      validation: "oc get kubevirt -n openshift-cnv -o jsonpath='{.spec.configuration.developerConfiguration.featureGates}'"
+
+  operators:
+    - name: "OpenShift Virtualization Operator"
+      namespace: "openshift-cnv"
+      validation: "oc get csv -n openshift-cnv | grep kubevirt-hyperconverged"
+
+    - name: "NMState Operator"
+      namespace: "openshift-nmstate"
+      validation: "oc get csv -n openshift-nmstate"
+
+  cluster_configuration:
+    topology: "Multi-node"
+    cpu_virtualization: "Standard (VT-x/AMD-V)"
+    storage: "Shared storage with RWX support across clusters"
+    network: "OVN-Kubernetes (primary), dedicated in-cluster LM NAD, dedicated cross-cluster LM NAD"
+    special_requirements:
+      - "crossClusterNetwork configured in KubeVirt CR MigrationConfiguration"
+      - "synchronizationPlacement configured for sync controller scheduling"
+
+  rbac_requirements:
+    - permission: "create/update on kubevirt.io/KubeVirt"
+      scope: "Namespace: openshift-cnv"
+      validation: "oc auth can-i update kubevirt -n openshift-cnv"
+    - permission: "get/list on VirtualMachineInstance"
+      scope: "Cluster"
+      validation: "oc auth can-i get virtualmachineinstances"
+    - permission: "create on VirtualMachineInstanceMigration"
+      scope: "Cluster"
+      validation: "oc auth can-i create virtualmachineinstancemigrations"
+
+---
+scenarios:
+
+  # ============================================================
+  # UNIT TEST SCENARIOS (TS-001 through TS-005)
+  # ============================================================
+
+  - scenario_id: "1"
+    test_id: "TS-CNV-76508-001"
+    tier: "Unit"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "proxy-mapping-lifecycle"
+      secondary:
+        - "tcp-listener-setup"
+        - "port-mapping-verification"
+      helpers_required:
+        - name: "ProxyMappingManager"
+          functions: ["OpenProxyPorts", "HasMappings", "Close"]
+          purpose: "Proxy port lifecycle management"
+      decorators: []
+
+    variables:
+      closure_scope:
+        - name: "manager"
+          type: "*ProxyMappingManager"
+          initialized_in: "BeforeEach"
+          used_in: ["BeforeEach", "It", "AfterEach"]
+          comment: "Proxy mapping manager under test"
+        - name: "migrationID"
+          type: "string"
+          initialized_in: "BeforeEach"
+          used_in: ["It"]
+          comment: "Unique migration identifier"
+        - name: "remappedPorts"
+          type: "map[int]int"
+          initialized_in: "It"
+          used_in: ["It"]
+          comment: "Returned remapped port map"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "Proxy port opening and mapping"
+        decorators: []
+      it:
+        description: "should open proxy ports and return valid remapped port map"
+        test_id_format: "[test_id:TS-CNV-76508-001]"
+
+    code_structure: |
+      Context("Proxy port opening and mapping", func() {
+        BeforeEach(func() {
+          manager = NewProxyMappingManager()
+          migrationID = "test-migration-001"
+        })
+        It("[test_id:TS-CNV-76508-001]should open proxy ports and return valid remapped port map", func() {
+          portMap := map[int]int{49152: 49152, 49153: 49153}
+          remappedPorts, err = manager.OpenProxyPorts(migrationID, "127.0.0.1", "10.0.0.1:8080", portMap)
+          ExpectWithOffset(1, err).ToNot(HaveOccurred())
+          Expect(remappedPorts).To(HaveLen(2))
+          Expect(manager.HasMappings(migrationID)).To(BeTrue())
+        })
+        AfterEach(func() {
+          manager.Close(migrationID)
+        })
+      })
+
+    test_objective:
+      title: "Proxy Port Opening and Mapping"
+      what: |
+        Validates that the ProxyMappingManager correctly opens TCP proxy ports when
+        OpenProxyPorts() is called with a migration ID, bind address, target address,
+        and port map. Verifies the returned remapped ports map has the correct number
+        of entries and each port is a valid listening TCP port.
+      why: |
+        Port opening is the fundamental operation of the proxy layer. If proxy ports
+        cannot be opened correctly, no cross-cluster migration traffic can flow through
+        the sync controller, completely breaking the CCLM feature.
+      acceptance_criteria:
+        - "OpenProxyPorts returns a remapped port map with same number of entries as input"
+        - "Each remapped port is a valid, listening TCP port"
+        - "HasMappings returns true for the migration ID after port opening"
+
+    classification:
+      test_type: "Unit"
+      scope: "Single-component"
+      automation_approach: "Go unit test with net.Dial verification"
+
+    specific_preconditions:
+      - name: "No preconditions"
+        requirement: "Unit test - no cluster required"
+        validation: "N/A"
+
+    test_data:
+      resource_definitions: []
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Create a ProxyMappingManager instance"
+          command: "manager := NewProxyMappingManager()"
+          validation: "Manager is not nil"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Call OpenProxyPorts with migration ID, bind address, target address, and 2-port map"
+          command: "remappedPorts, err := manager.OpenProxyPorts(migrationID, bindAddr, targetAddr, portMap)"
+          validation: "No error returned"
+        - step_id: "TEST-02"
+          action: "Verify remapped ports map has 2 entries"
+          command: "Expect(remappedPorts).To(HaveLen(2))"
+          validation: "Exactly 2 remapped ports returned"
+        - step_id: "TEST-03"
+          action: "Verify each remapped port is a valid listening TCP port"
+          command: "net.Dial('tcp', fmt.Sprintf('127.0.0.1:%d', port))"
+          validation: "Connection succeeds for each remapped port"
+        - step_id: "TEST-04"
+          action: "Verify HasMappings returns true for the migration ID"
+          command: "Expect(manager.HasMappings(migrationID)).To(BeTrue())"
+          validation: "HasMappings returns true"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Close proxy mappings for the migration ID"
+          command: "manager.Close(migrationID)"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "Remapped port map has correct number of entries"
+        condition: "len(remappedPorts) == len(inputPortMap)"
+        failure_impact: "Proxy cannot forward all migration channels"
+      - assertion_id: "ASSERT-02"
+        priority: "P0"
+        description: "Each remapped port is a valid listening TCP port"
+        condition: "net.Dial succeeds for each remapped port"
+        failure_impact: "Migration traffic cannot reach proxy"
+      - assertion_id: "ASSERT-03"
+        priority: "P0"
+        description: "HasMappings returns true after opening"
+        condition: "manager.HasMappings(migrationID) == true"
+        failure_impact: "Proxy state tracking is broken"
+
+    dependencies:
+      kubernetes_resources: []
+      external_tools: []
+      scenario_specific_rbac: []
+
+  - scenario_id: "2"
+    test_id: "TS-CNV-76508-002"
+    tier: "Unit"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "proxy-cleanup-lifecycle"
+      secondary:
+        - "port-cleanup-verification"
+        - "connection-refused-check"
+      helpers_required:
+        - name: "ProxyMappingManager"
+          functions: ["OpenProxyPorts", "Close", "HasMappings"]
+          purpose: "Proxy port cleanup verification"
+      decorators: []
+
+    variables:
+      closure_scope:
+        - name: "manager"
+          type: "*ProxyMappingManager"
+          initialized_in: "BeforeEach"
+          used_in: ["BeforeEach", "It"]
+          comment: "Proxy mapping manager under test"
+        - name: "remappedPorts"
+          type: "map[int]int"
+          initialized_in: "BeforeEach"
+          used_in: ["It"]
+          comment: "Ports opened in setup for cleanup testing"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "Proxy port cleanup on close"
+        decorators: []
+      it:
+        description: "should close all listeners and remove mappings on Close()"
+        test_id_format: "[test_id:TS-CNV-76508-002]"
+
+    code_structure: |
+      Context("Proxy port cleanup on close", func() {
+        BeforeEach(func() {
+          manager = NewProxyMappingManager()
+          remappedPorts, _ = manager.OpenProxyPorts(migrationID, bindAddr, targetAddr, portMap)
+        })
+        It("[test_id:TS-CNV-76508-002]should close all listeners and remove mappings on Close()", func() {
+          manager.Close(migrationID)
+          Expect(manager.HasMappings(migrationID)).To(BeFalse())
+          for _, port := range remappedPorts {
+            _, err = net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+            Expect(err).To(HaveOccurred())
+          }
+        })
+      })
+
+    test_objective:
+      title: "Proxy Port Cleanup on Close"
+      what: |
+        Validates that calling Close() on the ProxyMappingManager properly tears down
+        all TCP listeners for a given migration ID, removes the mappings from internal
+        state, and ensures connections to previously opened ports are refused.
+      why: |
+        Proper cleanup prevents resource leaks (file descriptors, goroutines) and ensures
+        proxy ports are released for reuse by subsequent migrations. Without cleanup,
+        the sync controller would eventually exhaust available ports.
+      acceptance_criteria:
+        - "HasMappings returns false after Close()"
+        - "All previously opened ports refuse connections"
+        - "No resource leaks (listeners closed)"
+
+    classification:
+      test_type: "Unit"
+      scope: "Single-component"
+      automation_approach: "Go unit test with connection refused verification"
+
+    specific_preconditions:
+      - name: "Proxy ports opened"
+        requirement: "Proxy ports must be opened via TS-001 flow before cleanup"
+        validation: "HasMappings returns true before Close()"
+
+    test_data:
+      resource_definitions: []
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Open proxy ports via OpenProxyPorts()"
+          command: "remappedPorts, _ := manager.OpenProxyPorts(migrationID, bindAddr, targetAddr, portMap)"
+          validation: "Ports opened successfully"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Call Close() with the migration ID"
+          command: "manager.Close(migrationID)"
+          validation: "Close completes without error"
+        - step_id: "TEST-02"
+          action: "Verify HasMappings returns false"
+          command: "Expect(manager.HasMappings(migrationID)).To(BeFalse())"
+          validation: "No mappings remain"
+        - step_id: "TEST-03"
+          action: "Attempt to connect to previously opened ports"
+          command: "net.DialTimeout('tcp', addr, time.Second)"
+          validation: "Connection is refused for all ports"
+      cleanup: []
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "Mappings removed after Close()"
+        condition: "manager.HasMappings(migrationID) == false"
+        failure_impact: "State tracking broken, potential port conflicts"
+      - assertion_id: "ASSERT-02"
+        priority: "P0"
+        description: "Connections refused on closed ports"
+        condition: "net.Dial returns error for all closed ports"
+        failure_impact: "Resource leak - listeners not properly closed"
+
+    dependencies:
+      kubernetes_resources: []
+      external_tools: []
+      scenario_specific_rbac: []
+
+  - scenario_id: "3"
+    test_id: "TS-CNV-76508-003"
+    tier: "Unit"
+    priority: "P1"
+    mvp: false
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "ssrf-protection"
+      secondary:
+        - "address-validation"
+        - "negative-test"
+      helpers_required:
+        - name: "ProxyMappingManager"
+          functions: ["OpenProxyPorts"]
+          purpose: "SSRF address validation"
+      decorators: []
+
+    variables:
+      closure_scope:
+        - name: "manager"
+          type: "*ProxyMappingManager"
+          initialized_in: "BeforeEach"
+          used_in: ["It"]
+          comment: "Proxy mapping manager under test"
+
+    test_structure:
+      type: "table-driven"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "SSRF protection"
+        decorators: []
+      it:
+        description: "should block proxy connections to link-local addresses"
+        test_id_format: "[test_id:TS-CNV-76508-003]"
+
+    code_structure: |
+      Context("SSRF protection", func() {
+        DescribeTable("[test_id:TS-CNV-76508-003]should block proxy connections to link-local addresses",
+          func(targetAddr string) {
+            _, err := manager.OpenProxyPorts(migrationID, "127.0.0.1", targetAddr, portMap)
+            Expect(err).To(HaveOccurred())
+            Expect(err.Error()).To(ContainSubstring("not allowed"))
+            Expect(manager.HasMappings(migrationID)).To(BeFalse())
+          },
+          Entry("cloud metadata IPv4", "169.254.169.254:8080"),
+          Entry("link-local IPv4", "169.254.1.1:443"),
+          Entry("link-local IPv6", "[fe80::1]:8080"),
+        )
+      })
+
+    test_objective:
+      title: "SSRF Protection - Link-Local Addresses Blocked"
+      what: |
+        Validates that the proxy's validateTargetAddress() function correctly blocks
+        connections to link-local IPv4 addresses (169.254.0.0/16), cloud metadata
+        endpoints (169.254.169.254), and link-local IPv6 addresses (fe80::/10).
+      why: |
+        SSRF protection is critical for security. Without it, a malicious actor could
+        use the proxy to access cloud metadata services or other internal network
+        resources, potentially leaking credentials or sensitive configuration data.
+      acceptance_criteria:
+        - "OpenProxyPorts returns error for 169.254.169.254:8080"
+        - "OpenProxyPorts returns error for 169.254.1.1:443"
+        - "OpenProxyPorts returns error for [fe80::1]:8080"
+        - "Error message contains 'not allowed'"
+        - "No listeners are opened for blocked addresses"
+
+    classification:
+      test_type: "Unit"
+      scope: "Single-component"
+      automation_approach: "Go unit test with table-driven entries"
+
+    specific_preconditions:
+      - name: "No preconditions"
+        requirement: "Unit test - no cluster required"
+        validation: "N/A"
+
+    test_data:
+      resource_definitions: []
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Create ProxyMappingManager"
+          command: "manager := NewProxyMappingManager()"
+          validation: "Manager created"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Call OpenProxyPorts with cloud metadata address 169.254.169.254:8080"
+          command: "_, err := manager.OpenProxyPorts(migrationID, bindAddr, '169.254.169.254:8080', portMap)"
+          validation: "Error returned with 'not allowed' message"
+        - step_id: "TEST-02"
+          action: "Call OpenProxyPorts with link-local IPv4 address 169.254.1.1:443"
+          command: "_, err := manager.OpenProxyPorts(migrationID, bindAddr, '169.254.1.1:443', portMap)"
+          validation: "Error returned with 'not allowed' message"
+        - step_id: "TEST-03"
+          action: "Call OpenProxyPorts with link-local IPv6 address [fe80::1]:8080"
+          command: "_, err := manager.OpenProxyPorts(migrationID, bindAddr, '[fe80::1]:8080', portMap)"
+          validation: "Error returned with 'not allowed' message"
+      cleanup: []
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P1"
+        description: "All link-local addresses are blocked"
+        condition: "OpenProxyPorts returns error for each blocked address"
+        failure_impact: "SSRF vulnerability - proxy could be used to access cloud metadata"
+      - assertion_id: "ASSERT-02"
+        priority: "P1"
+        description: "No listeners opened for blocked addresses"
+        condition: "HasMappings returns false after blocked attempt"
+        failure_impact: "Resource leak despite validation error"
+
+    dependencies:
+      kubernetes_resources: []
+      external_tools: []
+      scenario_specific_rbac: []
+
+  - scenario_id: "4"
+    test_id: "TS-CNV-76508-004"
+    tier: "Unit"
+    priority: "P1"
+    mvp: false
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "concurrency-limit"
+      secondary:
+        - "connection-semaphore"
+        - "stress-test"
+      helpers_required:
+        - name: "ProxyMappingManager"
+          functions: ["OpenProxyPorts"]
+          purpose: "Connection concurrency enforcement"
+      decorators: []
+
+    variables:
+      closure_scope:
+        - name: "manager"
+          type: "*ProxyMappingManager"
+          initialized_in: "BeforeEach"
+          used_in: ["It", "AfterEach"]
+          comment: "Proxy mapping manager under test"
+        - name: "connections"
+          type: "[]net.Conn"
+          initialized_in: "It"
+          used_in: ["It", "AfterEach"]
+          comment: "Accumulated TCP connections for cleanup"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "Connection concurrency limit"
+        decorators: []
+      it:
+        description: "should enforce 64-connection limit per proxy mapping"
+        test_id_format: "[test_id:TS-CNV-76508-004]"
+
+    code_structure: |
+      Context("Connection concurrency limit", func() {
+        It("[test_id:TS-CNV-76508-004]should enforce 64-connection limit per proxy mapping", func() {
+          // Open 64 concurrent connections - all should succeed
+          for i := 0; i < 64; i++ {
+            conn, err := net.Dial("tcp", proxyAddr)
+            ExpectWithOffset(1, err).ToNot(HaveOccurred())
+            connections = append(connections, conn)
+          }
+          // 65th connection should be rejected
+          conn, err := net.DialTimeout("tcp", proxyAddr, time.Second)
+          if err == nil {
+            conn.Close()
+          }
+          Expect(err).To(HaveOccurred())
+        })
+      })
+
+    test_objective:
+      title: "Connection Concurrency Limit"
+      what: |
+        Validates that the proxy enforces the maxConnectionsPerProxy limit of 64
+        connections per mapping. The connection semaphore should allow up to 64
+        concurrent connections and reject the 65th connection immediately.
+      why: |
+        The concurrency limit prevents resource exhaustion on the sync controller.
+        Without it, a burst of migration traffic or a misbehaving component could
+        exhaust file descriptors and memory, destabilizing the entire sync controller.
+      acceptance_criteria:
+        - "First 64 connections succeed"
+        - "65th connection is rejected (closed immediately)"
+
+    classification:
+      test_type: "Unit"
+      scope: "Single-component"
+      automation_approach: "Go unit test with concurrent connection management"
+
+    specific_preconditions:
+      - name: "Proxy port opened with echo server"
+        requirement: "Target echo server running, proxy port opened"
+        validation: "Proxy port accepts connections"
+
+    test_data:
+      resource_definitions: []
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Start a target echo TCP server"
+          command: "echoServer := startEchoServer()"
+          validation: "Echo server listening"
+        - step_id: "SETUP-02"
+          action: "Open proxy port targeting echo server"
+          command: "remappedPorts, _ := manager.OpenProxyPorts(migrationID, bindAddr, echoServer.Addr, portMap)"
+          validation: "Proxy port opened"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Open 64 concurrent connections to the proxy port"
+          command: "for i := 0; i < 64; i++ { conn, _ := net.Dial('tcp', proxyAddr) }"
+          validation: "All 64 connections succeed"
+        - step_id: "TEST-02"
+          action: "Attempt to open a 65th connection"
+          command: "conn, err := net.DialTimeout('tcp', proxyAddr, time.Second)"
+          validation: "Connection is rejected"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Close all connections and proxy manager"
+          command: "for _, conn := range connections { conn.Close() }; manager.Close(migrationID)"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P1"
+        description: "64 connections accepted"
+        condition: "All 64 net.Dial calls succeed without error"
+        failure_impact: "Proxy rejects valid connections below limit"
+      - assertion_id: "ASSERT-02"
+        priority: "P1"
+        description: "65th connection rejected"
+        condition: "net.DialTimeout returns error or connection closed immediately"
+        failure_impact: "No concurrency limit - potential resource exhaustion"
+
+    dependencies:
+      kubernetes_resources: []
+      external_tools: []
+      scenario_specific_rbac: []
+
+  - scenario_id: "5"
+    test_id: "TS-CNV-76508-005"
+    tier: "Unit"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "bidirectional-forwarding"
+      secondary:
+        - "tcp-echo-test"
+        - "data-integrity"
+      helpers_required:
+        - name: "ProxyMappingManager"
+          functions: ["OpenProxyPorts"]
+          purpose: "Bidirectional traffic forwarding validation"
+      decorators: []
+
+    variables:
+      closure_scope:
+        - name: "manager"
+          type: "*ProxyMappingManager"
+          initialized_in: "BeforeEach"
+          used_in: ["It", "AfterEach"]
+          comment: "Proxy mapping manager under test"
+        - name: "testData"
+          type: "[]byte"
+          initialized_in: "It"
+          used_in: ["It"]
+          comment: "Test payload for bidirectional forwarding"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "Bidirectional traffic forwarding"
+        decorators: []
+      it:
+        description: "should forward data correctly in both directions through proxy"
+        test_id_format: "[test_id:TS-CNV-76508-005]"
+
+    code_structure: |
+      Context("Bidirectional traffic forwarding", func() {
+        It("[test_id:TS-CNV-76508-005]should forward data correctly in both directions through proxy", func() {
+          conn, err := net.Dial("tcp", proxyAddr)
+          ExpectWithOffset(1, err).ToNot(HaveOccurred())
+          defer conn.Close()
+          // Send data client → proxy → target
+          _, err = conn.Write(testData)
+          ExpectWithOffset(1, err).ToNot(HaveOccurred())
+          // Read echo response target → proxy → client
+          response := make([]byte, len(testData))
+          _, err = conn.Read(response)
+          ExpectWithOffset(1, err).ToNot(HaveOccurred())
+          Expect(response).To(Equal(testData))
+        })
+      })
+
+    test_objective:
+      title: "Bidirectional Traffic Forwarding"
+      what: |
+        Validates that the proxy correctly forwards data in both directions using
+        io.Copy-based bidirectional forwarding. Data sent from client to proxy is
+        forwarded to the target, and the response from target flows back through
+        the proxy to the client without corruption.
+      why: |
+        Bidirectional forwarding is the core function of the proxy. Migration traffic
+        includes both libvirt state data and NBD block data that must flow correctly
+        in both directions. Any data corruption would cause migration failure or
+        data loss on the migrated VM.
+      acceptance_criteria:
+        - "Data sent from client reaches the target through proxy"
+        - "Response from target reaches the client through proxy"
+        - "Data is not corrupted during forwarding"
+
+    classification:
+      test_type: "Unit"
+      scope: "Single-component"
+      automation_approach: "Go unit test with echo server and data comparison"
+
+    specific_preconditions:
+      - name: "Proxy port with echo target"
+        requirement: "Echo TCP server running, proxy port opened targeting it"
+        validation: "Proxy port accepts connections"
+
+    test_data:
+      resource_definitions: []
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Start a target TCP echo server"
+          command: "echoServer := startEchoServer()"
+          validation: "Echo server listening"
+        - step_id: "SETUP-02"
+          action: "Open proxy port targeting echo server"
+          command: "remappedPorts, _ := manager.OpenProxyPorts(migrationID, bindAddr, echoServer.Addr, portMap)"
+          validation: "Proxy port opened"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Connect to the proxy port"
+          command: "conn, err := net.Dial('tcp', proxyAddr)"
+          validation: "Connection established"
+        - step_id: "TEST-02"
+          action: "Send data from client through proxy to target"
+          command: "conn.Write(testData)"
+          validation: "Data sent without error"
+        - step_id: "TEST-03"
+          action: "Read response from target through proxy to client"
+          command: "conn.Read(response)"
+          validation: "Response received matches original data"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Close connection and proxy manager"
+          command: "conn.Close(); manager.Close(migrationID)"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "Data forwarded correctly in both directions"
+        condition: "response == testData"
+        failure_impact: "Migration data corruption - VM data loss"
+
+    dependencies:
+      kubernetes_resources: []
+      external_tools: []
+      scenario_specific_rbac: []
+
+  # ============================================================
+  # TIER 1 TEST SCENARIOS (TS-006 through TS-011, TS-013 through TS-017)
+  # ============================================================
+
+  - scenario_id: "6"
+    test_id: "TS-CNV-76508-006"
+    tier: "Tier 1"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "feature-gate-validation"
+      secondary:
+        - "kubevirt-cr-update"
+        - "feature-gate-toggle"
+      helpers_required:
+        - name: "kubevirt"
+          functions: ["Client"]
+          purpose: "KubeVirt API access"
+        - name: "libvmi"
+          functions: ["NewVirtualMachine"]
+          purpose: "VMI creation"
+      decorators:
+        - "decorators.SigNetwork"
+        - "decorators.SigCompute"
+        - "Serial"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["BeforeAll", "It", "AfterAll"]
+          comment: "Test context"
+        - name: "namespace"
+          type: "string"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test namespace"
+        - name: "kvClient"
+          type: "kubecli.KubevirtClient"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "KubeVirt API client"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+          - "decorators.SigCompute"
+      context:
+        description: "Feature gate enablement"
+        decorators:
+          - "Serial"
+      it:
+        description: "should control proxy functionality via DecentralizedLiveMigration feature gate"
+        test_id_format: "[test_id:TS-CNV-76508-006]"
+
+    code_structure: |
+      Context("Feature gate enablement", Serial, func() {
+        BeforeAll(func() {
+          ctx = context.Background()
+          namespace = testsuite.GetTestNamespace(nil)
+          kvClient = kubevirt.Client()
+        })
+        It("[test_id:TS-CNV-76508-006]should control proxy functionality via DecentralizedLiveMigration feature gate", func() {
+          // Verify feature gate is NOT enabled by default
+          // Enable DecentralizedLiveMigration in KubeVirt CR
+          // Verify feature gate is active
+          // Disable and verify proxy config is rejected
+        })
+      })
+
+    test_objective:
+      title: "Feature Gate Enablement"
+      what: |
+        Validates that the DecentralizedLiveMigration feature gate correctly controls
+        the proxy functionality. The feature gate is registered at Alpha stage and
+        should not be enabled by default. When enabled, proxy-related configuration
+        fields become available. When disabled, proxy configuration should be rejected.
+      why: |
+        Feature gating is the primary safety mechanism for new features. It ensures
+        the proxy functionality cannot be accidentally activated in production clusters
+        until it has been explicitly opted into by the administrator.
+      acceptance_criteria:
+        - "DecentralizedLiveMigration is NOT enabled by default"
+        - "Feature gate can be enabled via KubeVirt CR developer configuration"
+        - "When enabled, proxy configuration is accepted"
+        - "When disabled, proxy configuration is rejected"
+
+    classification:
+      test_type: "Functional"
+      scope: "Multi-component"
+      automation_approach: "Ginkgo test with KubeVirt CR manipulation"
+
+    specific_preconditions:
+      - name: "OCP cluster with CNV"
+        requirement: "OCP 4.22+ with OpenShift Virtualization installed"
+        validation: "oc get csv -n openshift-cnv"
+
+    test_data:
+      resource_definitions:
+        - name: "kubevirt-cr-feature-gate"
+          type: "KubeVirt"
+          yaml: |
+            apiVersion: kubevirt.io/v1
+            kind: KubeVirt
+            metadata:
+              name: kubevirt
+              namespace: openshift-cnv
+            spec:
+              configuration:
+                developerConfiguration:
+                  featureGates:
+                    - DecentralizedLiveMigration
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Get KubeVirt client"
+          command: "kvClient := kubevirt.Client()"
+          validation: "Client connected"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Verify DecentralizedLiveMigration feature gate is NOT enabled by default"
+          command: "oc get kubevirt -n openshift-cnv -o jsonpath='{.spec.configuration.developerConfiguration.featureGates}'"
+          validation: "DecentralizedLiveMigration is not in the list"
+        - step_id: "TEST-02"
+          action: "Enable DecentralizedLiveMigration in KubeVirt CR developer configuration"
+          command: "Patch KubeVirt CR to add feature gate"
+          validation: "CR accepted without error"
+        - step_id: "TEST-03"
+          action: "Verify the feature gate is active"
+          command: "Check KubeVirt CR status for active feature gates"
+          validation: "DecentralizedLiveMigration appears in active gates"
+        - step_id: "TEST-04"
+          action: "Disable the feature gate and verify proxy-related configuration is rejected"
+          command: "Remove feature gate, attempt to set crossClusterNetwork"
+          validation: "crossClusterNetwork configuration rejected by admission webhook"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Restore KubeVirt CR to original state"
+          command: "Patch KubeVirt CR to remove feature gate changes"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "Feature gate not enabled by default"
+        condition: "DecentralizedLiveMigration not in featureGates list"
+        failure_impact: "Feature active without opt-in - unsafe for production"
+      - assertion_id: "ASSERT-02"
+        priority: "P0"
+        description: "Feature gate enables proxy configuration"
+        condition: "crossClusterNetwork accepted when feature gate enabled"
+        failure_impact: "Feature cannot be used even when explicitly enabled"
+      - assertion_id: "ASSERT-03"
+        priority: "P0"
+        description: "Feature gate disablement rejects proxy config"
+        condition: "crossClusterNetwork rejected when feature gate disabled"
+        failure_impact: "Proxy config accepted without feature gate - unsafe"
+
+    dependencies:
+      kubernetes_resources:
+        - "KubeVirt: kubevirt"
+      external_tools:
+        - "oc CLI"
+      scenario_specific_rbac:
+        - "update on kubevirt.io/KubeVirt in openshift-cnv"
+
+  - scenario_id: "7"
+    test_id: "TS-CNV-76508-007"
+    tier: "Tier 1"
+    priority: "P1"
+    mvp: false
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "api-field-validation"
+      secondary:
+        - "kubevirt-cr-update"
+        - "deployment-propagation"
+      helpers_required:
+        - name: "kubevirt"
+          functions: ["Client"]
+          purpose: "KubeVirt API access"
+      decorators:
+        - "decorators.SigNetwork"
+        - "Serial"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test context"
+        - name: "namespace"
+          type: "string"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test namespace"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "CrossClusterNetwork API field"
+        decorators:
+          - "Serial"
+      it:
+        description: "should validate and propagate crossClusterNetwork to sync controller deployment"
+        test_id_format: "[test_id:TS-CNV-76508-007]"
+
+    code_structure: |
+      Context("CrossClusterNetwork API field", Serial, func() {
+        It("[test_id:TS-CNV-76508-007]should validate and propagate crossClusterNetwork to sync controller deployment", func() {
+          // Set crossClusterNetwork in KubeVirt CR
+          // Verify CR accepted
+          // Verify sync controller deployment updated with network annotation
+          // Remove field and verify deployment updated
+        })
+      })
+
+    test_objective:
+      title: "CrossClusterNetwork API Field"
+      what: |
+        Validates that the crossClusterNetwork configuration field in the KubeVirt CR's
+        MigrationConfiguration is properly validated, accepted, and propagated to the
+        sync controller deployment as a Multus network annotation.
+      why: |
+        The crossClusterNetwork field is the primary configuration mechanism for enabling
+        proxy-based CCLM. If it is not propagated correctly, sync controllers will not
+        have access to the cross-cluster migration network and proxy will not function.
+      acceptance_criteria:
+        - "crossClusterNetwork accepts valid NAD name"
+        - "Sync controller deployment gets correct network annotation"
+        - "Removing field updates deployment accordingly"
+
+    classification:
+      test_type: "Functional"
+      scope: "Multi-component"
+      automation_approach: "Ginkgo test with CR patching and deployment verification"
+
+    specific_preconditions:
+      - name: "DecentralizedLiveMigration enabled"
+        requirement: "Feature gate enabled in KubeVirt CR"
+        validation: "oc get kubevirt -o jsonpath='{.spec.configuration.developerConfiguration.featureGates}'"
+
+    test_data:
+      resource_definitions:
+        - name: "kubevirt-cr-cross-cluster"
+          type: "KubeVirt"
+          yaml: |
+            apiVersion: kubevirt.io/v1
+            kind: KubeVirt
+            metadata:
+              name: kubevirt
+              namespace: openshift-cnv
+            spec:
+              configuration:
+                migrations:
+                  crossClusterNetwork: "cclm-nad"
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Ensure DecentralizedLiveMigration feature gate is enabled"
+          command: "Verify feature gate in KubeVirt CR"
+          validation: "Feature gate active"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Set crossClusterNetwork in KubeVirt CR to a valid NAD name"
+          command: "Patch KubeVirt CR migrations.crossClusterNetwork = 'cclm-nad'"
+          validation: "CR accepted and validated"
+        - step_id: "TEST-02"
+          action: "Verify sync controller deployment is updated with network annotation"
+          command: "oc get deployment virt-synchronization-controller -o jsonpath='{.spec.template.metadata.annotations}'"
+          validation: "k8s.v1.cni.cncf.io/networks annotation contains cclm-nad"
+        - step_id: "TEST-03"
+          action: "Remove crossClusterNetwork field"
+          command: "Patch KubeVirt CR to remove crossClusterNetwork"
+          validation: "CR accepted"
+        - step_id: "TEST-04"
+          action: "Verify sync controller deployment updated accordingly"
+          command: "oc get deployment virt-synchronization-controller -o jsonpath='{.spec.template.metadata.annotations}'"
+          validation: "Network annotation removed or updated"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Restore KubeVirt CR to original state"
+          command: "Patch KubeVirt CR"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P1"
+        description: "API field accepted and validated"
+        condition: "KubeVirt CR patch succeeds with valid NAD name"
+        failure_impact: "Cannot configure cross-cluster network"
+      - assertion_id: "ASSERT-02"
+        priority: "P1"
+        description: "Network annotation propagated to deployment"
+        condition: "Sync controller deployment has correct network annotation"
+        failure_impact: "Sync controller has no access to CCLM network"
+
+    dependencies:
+      kubernetes_resources:
+        - "KubeVirt: kubevirt"
+        - "Deployment: virt-synchronization-controller"
+      external_tools:
+        - "oc CLI"
+      scenario_specific_rbac:
+        - "update on kubevirt.io/KubeVirt"
+
+  - scenario_id: "8"
+    test_id: "TS-CNV-76508-008"
+    tier: "Tier 1"
+    priority: "P1"
+    mvp: false
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "pod-placement"
+      secondary:
+        - "node-selector-validation"
+        - "pod-scheduling"
+      helpers_required:
+        - name: "kubevirt"
+          functions: ["Client"]
+          purpose: "KubeVirt API access"
+      decorators:
+        - "decorators.SigNetwork"
+        - "decorators.SigCompute"
+        - "Serial"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test context"
+        - name: "namespace"
+          type: "string"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test namespace"
+        - name: "targetNodes"
+          type: "[]string"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "List of designated worker nodes"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+          - "decorators.SigCompute"
+      context:
+        description: "SynchronizationPlacement"
+        decorators:
+          - "Serial"
+      it:
+        description: "should schedule sync controller pods only on designated nodes"
+        test_id_format: "[test_id:TS-CNV-76508-008]"
+
+    code_structure: |
+      Context("SynchronizationPlacement", Serial, func() {
+        It("[test_id:TS-CNV-76508-008]should schedule sync controller pods only on designated nodes", func() {
+          // Set synchronizationPlacement with node selector
+          // Verify pods scheduled on target nodes only
+          // Update to different nodes
+          // Verify pods rescheduled
+        })
+      })
+
+    test_objective:
+      title: "SynchronizationPlacement"
+      what: |
+        Validates that the synchronizationPlacement field in the KubeVirt CR correctly
+        controls where sync controller pods are scheduled. Node selectors should restrict
+        sync controller pods to designated worker nodes that have cross-cluster network access.
+      why: |
+        Not all nodes may have access to the cross-cluster migration network. SynchronizationPlacement
+        ensures sync controllers run only on nodes with proper network connectivity, which is
+        essential for the proxy to function correctly.
+      acceptance_criteria:
+        - "Sync controller pods run only on designated nodes"
+        - "Changing placement triggers pod rescheduling"
+
+    classification:
+      test_type: "Functional"
+      scope: "Multi-component"
+      automation_approach: "Ginkgo test with node selector and pod placement verification"
+
+    specific_preconditions:
+      - name: "DecentralizedLiveMigration enabled"
+        requirement: "Feature gate enabled"
+        validation: "Feature gate present in KubeVirt CR"
+      - name: "Multiple worker nodes"
+        requirement: "At least 2 worker nodes available"
+        validation: "oc get nodes -l node-role.kubernetes.io/worker"
+
+    test_data:
+      resource_definitions:
+        - name: "kubevirt-cr-placement"
+          type: "KubeVirt"
+          yaml: |
+            apiVersion: kubevirt.io/v1
+            kind: KubeVirt
+            metadata:
+              name: kubevirt
+              namespace: openshift-cnv
+            spec:
+              synchronizationPlacement:
+                nodeSelector:
+                  cclm-network: "true"
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Label specific worker nodes with cclm-network=true"
+          command: "oc label node worker-0 cclm-network=true"
+          validation: "Node labeled"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Set synchronizationPlacement with node selector targeting labeled nodes"
+          command: "Patch KubeVirt CR with synchronizationPlacement.nodeSelector"
+          validation: "CR accepted"
+        - step_id: "TEST-02"
+          action: "Verify sync controller pods are scheduled only on designated nodes"
+          command: "oc get pods -l app=virt-synchronization-controller -o wide"
+          validation: "All pods running on labeled nodes"
+        - step_id: "TEST-03"
+          action: "Update placement to target different nodes"
+          command: "Label different nodes, update KubeVirt CR"
+          validation: "CR accepted"
+        - step_id: "TEST-04"
+          action: "Verify pods are rescheduled accordingly"
+          command: "oc get pods -l app=virt-synchronization-controller -o wide"
+          validation: "Pods moved to new target nodes"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Remove node labels and restore KubeVirt CR"
+          command: "oc label node worker-0 cclm-network-; restore KubeVirt CR"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P1"
+        description: "Pods scheduled on designated nodes only"
+        condition: "All sync controller pods running on nodes with cclm-network=true label"
+        failure_impact: "Sync controllers may run on nodes without CCLM network access"
+      - assertion_id: "ASSERT-02"
+        priority: "P1"
+        description: "Placement changes trigger rescheduling"
+        condition: "Pods rescheduled after placement update"
+        failure_impact: "Sync controllers stuck on old nodes after config change"
+
+    dependencies:
+      kubernetes_resources:
+        - "KubeVirt: kubevirt"
+        - "Node: worker nodes"
+      external_tools:
+        - "oc CLI"
+      scenario_specific_rbac:
+        - "update on nodes (for labeling)"
+
+  - scenario_id: "9"
+    test_id: "TS-CNV-76508-009"
+    tier: "Tier 1"
+    priority: "P1"
+    mvp: false
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "prometheus-metrics"
+      secondary:
+        - "metrics-query"
+        - "migration-with-metrics"
+      helpers_required:
+        - name: "kubevirt"
+          functions: ["Client"]
+          purpose: "KubeVirt API access"
+        - name: "libmigration"
+          functions: ["RunMigration"]
+          purpose: "Migration execution"
+      decorators:
+        - "decorators.SigNetwork"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test context"
+        - name: "namespace"
+          type: "string"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test namespace"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "Proxy metrics emission"
+        decorators: []
+      it:
+        description: "should emit Prometheus metrics for proxy connections, bytes transferred, and errors"
+        test_id_format: "[test_id:TS-CNV-76508-009]"
+
+    code_structure: |
+      Context("Proxy metrics emission", func() {
+        It("[test_id:TS-CNV-76508-009]should emit Prometheus metrics for proxy connections, bytes transferred, and errors", func() {
+          // Initiate cross-cluster migration through proxy
+          // Query kubevirt_decentralized_migration_proxy_active_connections
+          // Query kubevirt_decentralized_migration_proxy_bytes_transferred_total
+          // After completion, verify kubevirt_decentralized_migration_proxy_errors_total
+        })
+      })
+
+    test_objective:
+      title: "Proxy Metrics Emission"
+      what: |
+        Validates that the proxy correctly emits three new Prometheus metrics during
+        cross-cluster migration: active_connections (gauge), bytes_transferred_total
+        (counter), and errors_total (counter). These metrics are registered in
+        virt-handler and exposed via the standard metrics endpoint.
+      why: |
+        Observability is critical for production operations. Without metrics, operators
+        cannot monitor proxy health, detect connection issues, or measure migration
+        traffic volume through the proxy layer.
+      acceptance_criteria:
+        - "kubevirt_decentralized_migration_proxy_active_connections > 0 during migration"
+        - "kubevirt_decentralized_migration_proxy_bytes_transferred_total > 0 after migration"
+        - "kubevirt_decentralized_migration_proxy_errors_total == 0 for successful migration"
+
+    classification:
+      test_type: "Functional"
+      scope: "Multi-component"
+      automation_approach: "Ginkgo test with Prometheus API queries"
+
+    specific_preconditions:
+      - name: "Proxy active during migration"
+        requirement: "Cross-cluster migration in progress using proxy"
+        validation: "Migration started with crossClusterNetwork configured"
+
+    test_data:
+      resource_definitions: []
+      api_endpoints:
+        - operation: "query_active_connections"
+          method: "GET"
+          path: "/api/v1/query?query=kubevirt_decentralized_migration_proxy_active_connections"
+          expected_status: 200
+        - operation: "query_bytes_transferred"
+          method: "GET"
+          path: "/api/v1/query?query=kubevirt_decentralized_migration_proxy_bytes_transferred_total"
+          expected_status: 200
+        - operation: "query_errors"
+          method: "GET"
+          path: "/api/v1/query?query=kubevirt_decentralized_migration_proxy_errors_total"
+          expected_status: 200
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Ensure proxy is active with cross-cluster migration configured"
+          command: "Configure crossClusterNetwork and initiate migration"
+          validation: "Migration in progress through proxy"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Initiate a cross-cluster live migration through the proxy"
+          command: "Create VirtualMachineInstanceMigration"
+          validation: "Migration starts"
+        - step_id: "TEST-02"
+          action: "Query Prometheus for active_connections metric during migration"
+          command: "curl prometheus-api/query?query=kubevirt_decentralized_migration_proxy_active_connections"
+          validation: "Metric value > 0"
+        - step_id: "TEST-03"
+          action: "Query for bytes_transferred_total metric"
+          command: "curl prometheus-api/query?query=kubevirt_decentralized_migration_proxy_bytes_transferred_total"
+          validation: "Metric value > 0"
+        - step_id: "TEST-04"
+          action: "After migration completes, query errors_total metric"
+          command: "curl prometheus-api/query?query=kubevirt_decentralized_migration_proxy_errors_total"
+          validation: "Metric value == 0 for successful migration"
+      cleanup: []
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P1"
+        description: "Active connections metric reflects proxy activity"
+        condition: "kubevirt_decentralized_migration_proxy_active_connections > 0 during migration"
+        failure_impact: "No visibility into proxy connection state"
+      - assertion_id: "ASSERT-02"
+        priority: "P1"
+        description: "Bytes transferred metric accumulates"
+        condition: "kubevirt_decentralized_migration_proxy_bytes_transferred_total > 0"
+        failure_impact: "Cannot measure proxy traffic volume"
+      - assertion_id: "ASSERT-03"
+        priority: "P1"
+        description: "Error metric tracks failures"
+        condition: "kubevirt_decentralized_migration_proxy_errors_total == 0 for success"
+        failure_impact: "Cannot detect proxy errors in monitoring"
+
+    dependencies:
+      kubernetes_resources:
+        - "VirtualMachineInstance: test-vm"
+        - "VirtualMachineInstanceMigration: test-migration"
+      external_tools:
+        - "Prometheus API"
+      scenario_specific_rbac: []
+
+  - scenario_id: "10"
+    test_id: "TS-CNV-76508-010"
+    tier: "Tier 1"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "target-proxy-remapping"
+      secondary:
+        - "vmi-status-verification"
+        - "port-remapping"
+      helpers_required:
+        - name: "kubevirt"
+          functions: ["Client"]
+          purpose: "KubeVirt API access"
+        - name: "libmigration"
+          functions: ["RunMigration"]
+          purpose: "Migration execution"
+      decorators:
+        - "decorators.SigNetwork"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test context"
+        - name: "namespace"
+          type: "string"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test namespace"
+        - name: "vmi"
+          type: "*v1.VirtualMachineInstance"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "VM instance being migrated"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "Target-side proxy port remapping"
+        decorators:
+          - "Ordered"
+      it:
+        description: "should remap target ports through proxy and update VMI status"
+        test_id_format: "[test_id:TS-CNV-76508-010]"
+
+    code_structure: |
+      Context("Target-side proxy port remapping", Ordered, func() {
+        BeforeAll(func() {
+          ctx = context.Background()
+          namespace = testsuite.GetTestNamespace(nil)
+          // Create VM and start migration
+        })
+        It("[test_id:TS-CNV-76508-010]should remap target ports through proxy and update VMI status", func() {
+          // Verify target sync controller opens CCLM proxy ports
+          // Verify VMI status has remapped port map
+          // Verify NodeAddress points to sync controller CCLM IP
+        })
+      })
+
+    test_objective:
+      title: "Target-Side Proxy Port Remapping"
+      what: |
+        Validates that during a cross-cluster migration, the target sync controller
+        correctly opens proxy ports on the CCLM network, remaps the VMI migration
+        status port map to use proxy ports instead of direct virt-handler ports,
+        and updates the VMI NodeAddress to the sync controller's CCLM IP address.
+      why: |
+        Target-side port remapping is the first step of the proxy chain. Without correct
+        remapping, the source cluster would try to connect directly to virt-handler
+        ports on the cross-cluster network, which defeats the purpose of the proxy.
+      acceptance_criteria:
+        - "Target sync controller opens CCLM proxy ports"
+        - "VMI status port map uses proxy ports (not virt-handler ports)"
+        - "VMI NodeAddress points to sync controller CCLM IP"
+
+    classification:
+      test_type: "Functional"
+      scope: "Multi-component"
+      automation_approach: "Ginkgo test with VMI status inspection"
+
+    specific_preconditions:
+      - name: "Multi-cluster with CCLM network"
+        requirement: "Two clusters with crossClusterNetwork configured"
+        validation: "crossClusterNetwork set in both clusters' KubeVirt CRs"
+
+    test_data:
+      resource_definitions:
+        - name: "test-vm"
+          type: "VirtualMachine"
+          yaml: |
+            apiVersion: kubevirt.io/v1
+            kind: VirtualMachine
+            metadata:
+              name: test-proxy-vm
+            spec:
+              running: true
+              template:
+                spec:
+                  domain:
+                    resources:
+                      requests:
+                        memory: "512Mi"
+                    devices:
+                      disks:
+                        - name: containerdisk
+                          disk:
+                            bus: virtio
+                  volumes:
+                    - name: containerdisk
+                      containerDisk:
+                        image: "quay.io/kubevirt/fedora-cloud-container-disk-demo"
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Create VM on source cluster with running workload"
+          command: "Create VirtualMachine resource"
+          validation: "VM running"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Trigger cross-cluster migration to target cluster"
+          command: "Create VirtualMachineInstanceMigration with target cluster"
+          validation: "Migration initiated"
+        - step_id: "TEST-02"
+          action: "Verify target sync controller opens CCLM proxy ports"
+          command: "Check sync controller logs for proxy port opening"
+          validation: "Proxy ports opened on CCLM interface"
+        - step_id: "TEST-03"
+          action: "Verify VMI status has remapped port map (proxy ports)"
+          command: "oc get vmi -o jsonpath='{.status.migrationState.targetDirectMigrationNodePorts}'"
+          validation: "Ports are proxy-remapped ports, not direct virt-handler ports"
+        - step_id: "TEST-04"
+          action: "Verify VMI NodeAddress points to sync controller CCLM IP"
+          command: "oc get vmi -o jsonpath='{.status.migrationState.targetNodeAddress}'"
+          validation: "Address is sync controller CCLM IP, not virt-handler pod IP"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Delete VM and migration resources"
+          command: "Delete VirtualMachine and VirtualMachineInstanceMigration"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "Target proxy ports opened on CCLM network"
+        condition: "Proxy listeners active on CCLM interface of sync controller"
+        failure_impact: "No proxy - migration must use direct network path"
+      - assertion_id: "ASSERT-02"
+        priority: "P0"
+        description: "VMI port map uses remapped proxy ports"
+        condition: "targetDirectMigrationNodePorts contains proxy port values"
+        failure_impact: "Source connects to wrong ports - migration fails"
+      - assertion_id: "ASSERT-03"
+        priority: "P0"
+        description: "NodeAddress is sync controller CCLM IP"
+        condition: "targetNodeAddress == sync controller CCLM network IP"
+        failure_impact: "Source connects to wrong host - migration fails"
+
+    dependencies:
+      kubernetes_resources:
+        - "VirtualMachine: test-proxy-vm"
+        - "VirtualMachineInstanceMigration: test-migration"
+      external_tools:
+        - "oc CLI"
+      scenario_specific_rbac: []
+
+  - scenario_id: "11"
+    test_id: "TS-CNV-76508-011"
+    tier: "Tier 1"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "source-proxy-remapping"
+      secondary:
+        - "vmi-status-verification"
+        - "port-remapping"
+      helpers_required:
+        - name: "kubevirt"
+          functions: ["Client"]
+          purpose: "KubeVirt API access"
+      decorators:
+        - "decorators.SigNetwork"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test context"
+        - name: "namespace"
+          type: "string"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test namespace"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "Source-side proxy port remapping"
+        decorators:
+          - "Ordered"
+      it:
+        description: "should open source in-cluster proxy ports and update VMI migration state"
+        test_id_format: "[test_id:TS-CNV-76508-011]"
+
+    code_structure: |
+      Context("Source-side proxy port remapping", Ordered, func() {
+        It("[test_id:TS-CNV-76508-011]should open source in-cluster proxy ports and update VMI migration state", func() {
+          // Verify source sync controller receives remapped target state
+          // Verify source opens in-cluster proxy ports
+          // Verify VMI status updated with source-side ports
+          // Verify TargetNodeAddress points to source sync controller
+        })
+      })
+
+    test_objective:
+      title: "Source-Side Proxy Port Remapping"
+      what: |
+        Validates that the source sync controller correctly receives the remapped target
+        state, opens in-cluster proxy ports that forward to the target's CCLM proxy ports,
+        and updates the VMI migration state with source-side remapped ports and the source
+        sync controller's in-cluster IP address.
+      why: |
+        Source-side remapping completes the proxy chain. The virt-handler on the source
+        cluster connects to the source sync controller's in-cluster ports, which forward
+        traffic through the CCLM network to the target sync controller, and then to the
+        target virt-handler. Without this, the full proxy path is broken.
+      acceptance_criteria:
+        - "Source sync controller opens in-cluster proxy ports"
+        - "VMI status updated with source-side remapped ports"
+        - "TargetNodeAddress points to source sync controller in-cluster IP"
+
+    classification:
+      test_type: "Functional"
+      scope: "Multi-component"
+      automation_approach: "Ginkgo test with VMI status inspection"
+
+    specific_preconditions:
+      - name: "Target-side proxy active"
+        requirement: "TS-010 target-side proxy must be active"
+        validation: "Target sync controller has opened CCLM proxy ports"
+
+    test_data:
+      resource_definitions: []
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Ensure target-side proxy is active (from TS-010)"
+          command: "Verify target proxy ports opened"
+          validation: "Target proxy active"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Verify source sync controller receives remapped target state"
+          command: "Check source sync controller logs"
+          validation: "Remapped target state received"
+        - step_id: "TEST-02"
+          action: "Verify source sync controller opens in-cluster proxy ports"
+          command: "Check sync controller for local listeners"
+          validation: "In-cluster proxy ports opened"
+        - step_id: "TEST-03"
+          action: "Verify VMI status updated with source-side remapped ports"
+          command: "oc get vmi -o jsonpath='{.status.migrationState}'"
+          validation: "Source-side ports in VMI status"
+        - step_id: "TEST-04"
+          action: "Verify TargetNodeAddress points to source sync controller in-cluster IP"
+          command: "oc get vmi -o jsonpath='{.status.migrationState.targetNodeAddress}'"
+          validation: "Address is source sync controller in-cluster IP"
+      cleanup: []
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "Source proxy ports opened on in-cluster network"
+        condition: "Source sync controller has active listeners on in-cluster interface"
+        failure_impact: "virt-handler cannot reach proxy - migration fails"
+      - assertion_id: "ASSERT-02"
+        priority: "P0"
+        description: "VMI status reflects full proxy chain"
+        condition: "Both legacy and new-style VMI migration state fields updated"
+        failure_impact: "virt-handler uses wrong port/address mapping"
+
+    dependencies:
+      kubernetes_resources:
+        - "VirtualMachineInstance: test-proxy-vm"
+      external_tools:
+        - "oc CLI"
+      scenario_specific_rbac: []
+
+  - scenario_id: "13"
+    test_id: "TS-CNV-76508-013"
+    tier: "Tier 1"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "failure-cleanup"
+      secondary:
+        - "migration-failure-injection"
+        - "resource-cleanup-verification"
+      helpers_required:
+        - name: "kubevirt"
+          functions: ["Client"]
+          purpose: "KubeVirt API access"
+        - name: "libmigration"
+          functions: ["RunMigration"]
+          purpose: "Migration execution"
+      decorators:
+        - "decorators.SigNetwork"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test context"
+        - name: "namespace"
+          type: "string"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test namespace"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "Proxy cleanup on migration failure"
+        decorators: []
+      it:
+        description: "should clean up proxy ports on both sides after migration failure"
+        test_id_format: "[test_id:TS-CNV-76508-013]"
+
+    code_structure: |
+      Context("Proxy cleanup on migration failure", func() {
+        It("[test_id:TS-CNV-76508-013]should clean up proxy ports on both sides after migration failure", func() {
+          // Initiate cross-cluster migration
+          // Induce migration failure
+          // Verify proxy ports cleaned up on source and target
+          // Verify error metrics incremented
+        })
+      })
+
+    test_objective:
+      title: "Proxy Cleanup on Migration Failure"
+      what: |
+        Validates that when a cross-cluster migration fails, the proxy correctly cleans
+        up all TCP listeners and connections on both the source and target sync controllers.
+        Also verifies that the proxy error metrics counter is incremented to reflect the failure.
+      why: |
+        Resource cleanup on failure prevents port and goroutine leaks that would accumulate
+        across multiple failed migrations. Without cleanup, the sync controller would
+        eventually run out of resources and stop functioning.
+      acceptance_criteria:
+        - "Proxy ports cleaned up on source sync controller after failure"
+        - "Proxy ports cleaned up on target sync controller after failure"
+        - "kubevirt_decentralized_migration_proxy_errors_total incremented"
+
+    classification:
+      test_type: "Functional"
+      scope: "Multi-component"
+      automation_approach: "Ginkgo test with failure injection and cleanup verification"
+
+    specific_preconditions:
+      - name: "Proxy active during migration"
+        requirement: "Cross-cluster migration in progress through proxy"
+        validation: "Proxy ports opened on both sides"
+
+    test_data:
+      resource_definitions: []
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Set up cross-cluster migration through proxy"
+          command: "Create VM and initiate migration with crossClusterNetwork"
+          validation: "Migration in progress, proxy active"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Initiate a cross-cluster migration"
+          command: "Create VirtualMachineInstanceMigration"
+          validation: "Migration starts with proxy"
+        - step_id: "TEST-02"
+          action: "Induce migration failure (e.g., target node becomes unavailable)"
+          command: "Cordon target node or disrupt network"
+          validation: "Migration enters Failed state"
+        - step_id: "TEST-03"
+          action: "Verify proxy ports are cleaned up on both source and target"
+          command: "Check sync controller logs for proxy cleanup messages"
+          validation: "All proxy listeners closed"
+        - step_id: "TEST-04"
+          action: "Verify proxy error metrics are incremented"
+          command: "Query kubevirt_decentralized_migration_proxy_errors_total"
+          validation: "Metric value > 0"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Uncordon node and delete migration resources"
+          command: "oc adm uncordon node; delete VM and migration"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "Source proxy cleaned up after failure"
+        condition: "No proxy listeners on source sync controller"
+        failure_impact: "Resource leak on source cluster"
+      - assertion_id: "ASSERT-02"
+        priority: "P0"
+        description: "Target proxy cleaned up after failure"
+        condition: "No proxy listeners on target sync controller"
+        failure_impact: "Resource leak on target cluster"
+      - assertion_id: "ASSERT-03"
+        priority: "P1"
+        description: "Error metrics incremented"
+        condition: "kubevirt_decentralized_migration_proxy_errors_total > 0"
+        failure_impact: "Failed migrations not visible in monitoring"
+
+    dependencies:
+      kubernetes_resources:
+        - "VirtualMachine: test-proxy-vm"
+        - "VirtualMachineInstanceMigration: test-migration"
+      external_tools:
+        - "oc CLI"
+      scenario_specific_rbac: []
+
+  - scenario_id: "14"
+    test_id: "TS-CNV-76508-014"
+    tier: "Tier 1"
+    priority: "P2"
+    mvp: false
+    requirement_id: "CNV-76299"
+
+    patterns:
+      primary: "migration-cancellation"
+      secondary:
+        - "grpc-cancellation"
+        - "proxy-cleanup"
+      helpers_required:
+        - name: "kubevirt"
+          functions: ["Client"]
+          purpose: "KubeVirt API access"
+      decorators:
+        - "decorators.SigNetwork"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test context"
+        - name: "namespace"
+          type: "string"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test namespace"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "Migration cancellation through proxy"
+        decorators: []
+      it:
+        description: "should cancel migration cleanly and release proxy resources"
+        test_id_format: "[test_id:TS-CNV-76508-014]"
+
+    code_structure: |
+      Context("Migration cancellation through proxy", func() {
+        It("[test_id:TS-CNV-76508-014]should cancel migration cleanly and release proxy resources", func() {
+          // Start migration through proxy
+          // Delete VirtualMachineInstanceMigration
+          // Verify CancelMigration gRPC reaches remote cluster
+          // Verify proxy ports cleaned up
+          // Verify VM remains running on source
+        })
+      })
+
+    test_objective:
+      title: "Migration Cancellation Through Proxy"
+      what: |
+        Validates that cancelling a cross-cluster migration by deleting the
+        VirtualMachineInstanceMigration resource correctly sends a CancelMigration gRPC
+        call through the sync protocol, cleans up proxy ports on both source and target
+        sync controllers, and leaves the VM running on the source cluster.
+      why: |
+        Users need the ability to cancel in-progress migrations. The cancellation must
+        cleanly tear down the proxy chain to prevent resource leaks and ensure the VM
+        remains accessible on the source cluster.
+      acceptance_criteria:
+        - "CancelMigration gRPC call reaches the remote cluster"
+        - "Proxy ports cleaned up on both sides"
+        - "VM remains running on source cluster"
+
+    classification:
+      test_type: "Functional"
+      scope: "Multi-component"
+      automation_approach: "Ginkgo test with migration cancellation and cleanup verification"
+
+    specific_preconditions:
+      - name: "Cross-cluster migration in progress"
+        requirement: "Active migration through proxy"
+        validation: "Migration state is Running"
+
+    test_data:
+      resource_definitions: []
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Start cross-cluster migration through proxy"
+          command: "Create VM and VirtualMachineInstanceMigration"
+          validation: "Migration in progress"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Cancel the migration via VirtualMachineInstanceMigration deletion"
+          command: "oc delete virtualmachineinstancemigration test-migration"
+          validation: "Migration deleted"
+        - step_id: "TEST-02"
+          action: "Verify CancelMigration gRPC call reaches the remote cluster"
+          command: "Check sync controller logs for cancel message"
+          validation: "Cancel propagated to remote"
+        - step_id: "TEST-03"
+          action: "Verify proxy ports are cleaned up on both sides"
+          command: "Check sync controller logs"
+          validation: "All proxy resources released"
+        - step_id: "TEST-04"
+          action: "Verify VM remains running on source cluster"
+          command: "oc get vmi test-proxy-vm -o jsonpath='{.status.phase}'"
+          validation: "VM phase is Running"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Delete VM"
+          command: "oc delete vm test-proxy-vm"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P2"
+        description: "Cancel propagated through sync protocol"
+        condition: "CancelMigration gRPC received by remote sync controller"
+        failure_impact: "Migration hangs on remote cluster after cancellation"
+      - assertion_id: "ASSERT-02"
+        priority: "P2"
+        description: "Proxy resources released"
+        condition: "No proxy listeners on either sync controller"
+        failure_impact: "Resource leak after cancellation"
+      - assertion_id: "ASSERT-03"
+        priority: "P0"
+        description: "VM remains running"
+        condition: "VM phase == Running on source cluster"
+        failure_impact: "VM lost during cancellation"
+
+    dependencies:
+      kubernetes_resources:
+        - "VirtualMachine: test-proxy-vm"
+        - "VirtualMachineInstanceMigration: test-migration"
+      external_tools:
+        - "oc CLI"
+      scenario_specific_rbac: []
+
+  - scenario_id: "15"
+    test_id: "TS-CNV-76508-015"
+    tier: "Tier 1"
+    priority: "P1"
+    mvp: false
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "regression-non-proxy"
+      secondary:
+        - "migration-without-proxy"
+        - "backward-compatibility"
+      helpers_required:
+        - name: "kubevirt"
+          functions: ["Client"]
+          purpose: "KubeVirt API access"
+        - name: "libmigration"
+          functions: ["RunMigration"]
+          purpose: "Migration execution"
+      decorators:
+        - "decorators.SigNetwork"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test context"
+        - name: "namespace"
+          type: "string"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test namespace"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "Regression - non-proxy decentralized migration"
+        decorators: []
+      it:
+        description: "should migrate without proxy when crossClusterNetwork is not configured"
+        test_id_format: "[test_id:TS-CNV-76508-015]"
+
+    code_structure: |
+      Context("Regression - non-proxy decentralized migration", func() {
+        It("[test_id:TS-CNV-76508-015]should migrate without proxy when crossClusterNetwork is not configured", func() {
+          // Ensure crossClusterNetwork NOT configured
+          // Initiate decentralized migration
+          // Verify migration completes via direct path
+          // Verify no proxy ports opened
+        })
+      })
+
+    test_objective:
+      title: "Regression - Non-Proxy Decentralized Migration"
+      what: |
+        Validates that existing non-proxy decentralized migrations continue to work
+        correctly when the DecentralizedLiveMigration feature gate is enabled but
+        crossClusterNetwork is NOT configured. The proxy should not activate and
+        migrations should proceed via the direct virt-handler connection path.
+      why: |
+        Backward compatibility is essential. Existing users who have not configured
+        crossClusterNetwork must not be affected by the new proxy code. Any regression
+        would break existing decentralized migration workflows.
+      acceptance_criteria:
+        - "Migration completes without proxy when crossClusterNetwork not set"
+        - "No proxy ports are opened"
+        - "Direct virt-handler connection path used"
+
+    classification:
+      test_type: "Functional"
+      scope: "Multi-component"
+      automation_approach: "Ginkgo test with migration verification and proxy absence check"
+
+    specific_preconditions:
+      - name: "DecentralizedLiveMigration enabled, crossClusterNetwork NOT configured"
+        requirement: "Feature gate on, no crossClusterNetwork"
+        validation: "oc get kubevirt -o yaml shows no crossClusterNetwork"
+
+    test_data:
+      resource_definitions: []
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Ensure DecentralizedLiveMigration enabled but crossClusterNetwork NOT configured"
+          command: "Verify KubeVirt CR state"
+          validation: "Feature gate on, no crossClusterNetwork"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Initiate a decentralized migration without cross-cluster network configuration"
+          command: "Create VM and VirtualMachineInstanceMigration"
+          validation: "Migration starts"
+        - step_id: "TEST-02"
+          action: "Verify migration proceeds without proxy (direct virt-handler connection)"
+          command: "Check VMI migration state for direct node addresses"
+          validation: "Migration uses direct path"
+        - step_id: "TEST-03"
+          action: "Verify no proxy ports are opened"
+          command: "Check sync controller logs for absence of proxy messages"
+          validation: "No proxy activity"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Delete VM and migration"
+          command: "Delete resources"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P1"
+        description: "Migration completes without proxy"
+        condition: "Migration succeeds via direct path"
+        failure_impact: "Regression - existing migrations broken"
+      - assertion_id: "ASSERT-02"
+        priority: "P1"
+        description: "No proxy ports opened"
+        condition: "Sync controller logs show no proxy port opening"
+        failure_impact: "Unnecessary proxy activation wasting resources"
+
+    dependencies:
+      kubernetes_resources:
+        - "VirtualMachine: test-vm"
+        - "VirtualMachineInstanceMigration: test-migration"
+      external_tools:
+        - "oc CLI"
+      scenario_specific_rbac: []
+
+  - scenario_id: "16"
+    test_id: "TS-CNV-76508-016"
+    tier: "Tier 1"
+    priority: "P1"
+    mvp: false
+    requirement_id: "CNV-76299"
+
+    patterns:
+      primary: "sync-controller-restart"
+      secondary:
+        - "pod-restart"
+        - "connection-rebuild"
+      helpers_required:
+        - name: "kubevirt"
+          functions: ["Client"]
+          purpose: "KubeVirt API access"
+      decorators:
+        - "decorators.SigNetwork"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test context"
+        - name: "namespace"
+          type: "string"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test namespace"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "Proxy resilience - sync controller restart"
+        decorators:
+          - "Serial"
+      it:
+        description: "should handle sync controller restart gracefully during active proxy session"
+        test_id_format: "[test_id:TS-CNV-76508-016]"
+
+    code_structure: |
+      Context("Proxy resilience - sync controller restart", Serial, func() {
+        It("[test_id:TS-CNV-76508-016]should handle sync controller restart gracefully during active proxy session", func() {
+          // Start migration with active proxy
+          // Restart sync controller pod
+          // Verify graceful shutdown closes proxy connections
+          // Verify migration recovers or fails gracefully
+        })
+      })
+
+    test_objective:
+      title: "Proxy Resilience - Sync Controller Restart"
+      what: |
+        Validates that when the sync controller pod is restarted during an active proxy
+        session, the graceful shutdown properly closes all proxy connections and listeners,
+        and upon restart, rebuildConnectionsAndUpdateSyncAddress() reconstructs the
+        connections. The migration should either recover or fail gracefully (not hang).
+      why: |
+        Pod restarts are a normal occurrence in Kubernetes (OOMKill, node drain, rolling
+        updates). The proxy must handle restarts without leaving dangling connections or
+        causing migrations to hang indefinitely.
+      acceptance_criteria:
+        - "Graceful shutdown closes all proxy connections"
+        - "Migration either recovers or fails gracefully (not hung)"
+        - "No resource leaks after restart"
+
+    classification:
+      test_type: "Functional"
+      scope: "Multi-component"
+      automation_approach: "Ginkgo test with pod deletion and recovery verification"
+
+    specific_preconditions:
+      - name: "Active proxy connections during migration"
+        requirement: "Cross-cluster migration in progress through proxy"
+        validation: "Proxy ports active on sync controller"
+
+    test_data:
+      resource_definitions: []
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Start cross-cluster migration with active proxy"
+          command: "Create VM and migration with crossClusterNetwork"
+          validation: "Proxy active"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Restart the sync controller pod during active proxy session"
+          command: "oc delete pod -l app=virt-synchronization-controller"
+          validation: "Pod deleted and restarts"
+        - step_id: "TEST-02"
+          action: "Verify graceful shutdown closes all proxy connections"
+          command: "Check deleted pod logs for closeConnections() messages"
+          validation: "All connections closed during shutdown"
+        - step_id: "TEST-03"
+          action: "Verify migration either recovers or fails gracefully"
+          command: "oc get vmi -o jsonpath='{.status.migrationState.phase}'"
+          validation: "Migration is Succeeded or Failed (not hung in Running)"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Delete VM and migration resources"
+          command: "Delete resources"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P1"
+        description: "Graceful shutdown closes proxy connections"
+        condition: "closeConnections() called, all listeners and connections closed"
+        failure_impact: "Dangling connections and goroutine leaks"
+      - assertion_id: "ASSERT-02"
+        priority: "P1"
+        description: "Migration does not hang"
+        condition: "Migration reaches terminal state (Succeeded or Failed) within timeout"
+        failure_impact: "Migration stuck indefinitely - requires manual intervention"
+
+    dependencies:
+      kubernetes_resources:
+        - "Pod: virt-synchronization-controller"
+        - "VirtualMachineInstance: test-proxy-vm"
+      external_tools:
+        - "oc CLI"
+      scenario_specific_rbac: []
+
+  - scenario_id: "17"
+    test_id: "TS-CNV-76508-017"
+    tier: "Tier 1"
+    priority: "P1"
+    mvp: false
+    requirement_id: "CNV-76508"
+
+    patterns:
+      primary: "operator-deployment"
+      secondary:
+        - "deployment-verification"
+        - "network-annotation"
+      helpers_required:
+        - name: "kubevirt"
+          functions: ["Client"]
+          purpose: "KubeVirt API access"
+      decorators:
+        - "decorators.SigNetwork"
+        - "Serial"
+
+    variables:
+      closure_scope:
+        - name: "ctx"
+          type: "context.Context"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test context"
+        - name: "namespace"
+          type: "string"
+          initialized_in: "BeforeAll"
+          used_in: ["It"]
+          comment: "Test namespace"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: "SIG"
+        description: "Cross-Cluster Migration Proxy"
+        decorators:
+          - "decorators.SigNetwork"
+      context:
+        description: "Operator deployment of sync controller with CCLM network"
+        decorators:
+          - "Serial"
+      it:
+        description: "should deploy sync controller with correct multi-network annotations"
+        test_id_format: "[test_id:TS-CNV-76508-017]"
+
+    code_structure: |
+      Context("Operator deployment of sync controller with CCLM network", Serial, func() {
+        It("[test_id:TS-CNV-76508-017]should deploy sync controller with correct multi-network annotations", func() {
+          // Verify virt-operator creates sync controller Deployment
+          // Verify deployment has correct network annotations
+          // Verify sync controller pod has interfaces on both networks
+          // Update crossClusterNetwork and verify deployment updated
+        })
+      })
+
+    test_objective:
+      title: "Operator Deployment of Sync Controller with CCLM Network"
+      what: |
+        Validates that virt-operator correctly creates the sync controller Deployment
+        with proper Multus network annotations when crossClusterNetwork is configured.
+        The sync controller pod must have network interfaces on both the in-cluster LM
+        network and the cross-cluster LM network.
+      why: |
+        The operator is responsible for translating the KubeVirt CR configuration into
+        actual deployment resources. If the network annotations are wrong, the sync
+        controller will not have access to the CCLM network and proxy cannot function.
+      acceptance_criteria:
+        - "Sync controller Deployment has correct network annotations"
+        - "Sync controller pod has interfaces on both LM networks"
+        - "Updating crossClusterNetwork updates deployment"
+
+    classification:
+      test_type: "Functional"
+      scope: "Multi-component"
+      automation_approach: "Ginkgo test with deployment and pod network verification"
+
+    specific_preconditions:
+      - name: "DecentralizedLiveMigration enabled, crossClusterNetwork configured"
+        requirement: "Feature gate on, crossClusterNetwork set"
+        validation: "KubeVirt CR shows both settings"
+
+    test_data:
+      resource_definitions: []
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Ensure DecentralizedLiveMigration enabled and crossClusterNetwork configured"
+          command: "Verify KubeVirt CR"
+          validation: "Config correct"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Verify virt-operator creates sync controller Deployment with correct network annotations"
+          command: "oc get deployment virt-synchronization-controller -o yaml"
+          validation: "Deployment has k8s.v1.cni.cncf.io/networks annotation with CCLM NAD"
+        - step_id: "TEST-02"
+          action: "Verify sync controller pod has interfaces on both in-cluster LM and CCLM networks"
+          command: "oc exec sync-controller-pod -- ip addr"
+          validation: "Multiple network interfaces present"
+        - step_id: "TEST-03"
+          action: "Update crossClusterNetwork value and verify deployment is updated"
+          command: "Patch KubeVirt CR with new NAD name"
+          validation: "Deployment annotation updated to new NAD name"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Restore KubeVirt CR"
+          command: "Patch KubeVirt CR"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P1"
+        description: "Deployment has correct network annotations"
+        condition: "k8s.v1.cni.cncf.io/networks annotation matches crossClusterNetwork"
+        failure_impact: "Sync controller cannot access CCLM network"
+      - assertion_id: "ASSERT-02"
+        priority: "P1"
+        description: "Pod has dual network interfaces"
+        condition: "Pod has interfaces on both in-cluster and CCLM networks"
+        failure_impact: "Proxy cannot forward between networks"
+      - assertion_id: "ASSERT-03"
+        priority: "P1"
+        description: "Deployment updates on config change"
+        condition: "Changing crossClusterNetwork triggers deployment update"
+        failure_impact: "Sync controller stuck with stale network config"
+
+    dependencies:
+      kubernetes_resources:
+        - "Deployment: virt-synchronization-controller"
+        - "KubeVirt: kubevirt"
+      external_tools:
+        - "oc CLI"
+      scenario_specific_rbac: []
+
+  # ============================================================
+  # TIER 2 TEST SCENARIO (TS-012)
+  # ============================================================
+
+  - scenario_id: "12"
+    test_id: "TS-CNV-76508-012"
+    tier: "Tier 2"
+    priority: "P0"
+    mvp: true
+    requirement_id: "CNV-76299"
+
+    patterns:
+      primary: "e2e-cross-cluster-migration"
+      secondary:
+        - "vm-lifecycle"
+        - "migration-e2e"
+        - "proxy-cleanup-verification"
+      helpers_required:
+        - name: "VirtualMachineForTests"
+          functions: ["create", "start", "wait_for_running"]
+          purpose: "VM lifecycle management"
+        - name: "migrate_vm_and_verify"
+          functions: ["migrate_vm_and_verify"]
+          purpose: "Migration execution and verification"
+      decorators: []
+
+    variables:
+      closure_scope:
+        - name: "source_vm"
+          type: "VirtualMachineForTests"
+          initialized_in: "setup"
+          used_in: ["test", "teardown"]
+          comment: "VM on source cluster"
+
+    test_structure:
+      type: "single"
+      describe:
+        wrapper: null
+        description: "Cross-Cluster Live Migration Through Proxy"
+        decorators: []
+      context:
+        description: "End-to-end cross-cluster migration through proxy"
+        decorators: []
+      it:
+        description: "should migrate VM across clusters through proxy with workload intact"
+        test_id_format: "[test_id:TS-CNV-76508-012]"
+
+    code_structure: |
+      class TestCrossClusterMigrationProxy:
+          """Tests for cross-cluster live migration through TCP proxy.
+
+          STP Reference: outputs/stp/CNV-76508/CNV-76508_test_plan.md
+          Jira: CNV-76299
+
+          Markers:
+              - tier2
+              - p0
+
+          Preconditions:
+              - Two clusters with crossClusterNetwork configured
+              - DecentralizedLiveMigration feature gate enabled
+              - Running VM on source cluster
+          """
+
+          def test_e2e_migration_through_proxy(self):
+              """Verify end-to-end cross-cluster migration through proxy.
+
+              Steps:
+                  1. Create a VM with a running workload on source cluster
+                  2. Initiate cross-cluster live migration to target cluster
+                  3. Verify migration completes successfully
+                  4. Verify VM is running on target cluster with workload intact
+                  5. Verify proxy ports are cleaned up on both clusters
+
+              Expected:
+                  - VM migrates successfully through proxy
+                  - Workload continues without interruption
+                  - All proxy resources cleaned up after migration
+              """
+              pass
+
+    test_objective:
+      title: "End-to-End Cross-Cluster Migration Through Proxy"
+      what: |
+        Validates the complete end-to-end flow of a cross-cluster live migration
+        through the TCP proxy layer. A VM with an active workload is migrated from
+        a source cluster to a target cluster, with all migration traffic flowing
+        through the sync controller proxy. After migration, the VM should be running
+        on the target cluster with the workload intact, and all proxy resources should
+        be cleaned up on both clusters.
+      why: |
+        This is the primary customer use case: migrating VMs across clusters without
+        requiring every virt-handler pod to have direct access to the cross-cluster
+        network. This test validates the entire feature works as designed, from
+        configuration through execution to cleanup.
+      acceptance_criteria:
+        - "VM migrates successfully from source to target cluster"
+        - "Workload continues without interruption during and after migration"
+        - "All proxy ports cleaned up on both clusters after migration"
+        - "Migration uses proxy path (not direct virt-handler connection)"
+
+    classification:
+      test_type: "E2E"
+      scope: "Multi-component"
+      automation_approach: "pytest with openshift-python-wrapper"
+
+    specific_preconditions:
+      - name: "Multi-cluster with CCLM"
+        requirement: "2 clusters with in-cluster and cross-cluster LM networks"
+        validation: "Both clusters accessible and configured"
+      - name: "DecentralizedLiveMigration enabled on both clusters"
+        requirement: "Feature gate enabled"
+        validation: "Feature gate active on both clusters"
+      - name: "crossClusterNetwork configured on both clusters"
+        requirement: "NAD for CCLM network"
+        validation: "crossClusterNetwork set in both KubeVirt CRs"
+
+    test_data:
+      resource_definitions:
+        - name: "source-vm"
+          type: "VirtualMachine"
+          yaml: |
+            apiVersion: kubevirt.io/v1
+            kind: VirtualMachine
+            metadata:
+              name: cclm-proxy-test-vm
+            spec:
+              running: true
+              template:
+                spec:
+                  domain:
+                    resources:
+                      requests:
+                        memory: "1Gi"
+                    devices:
+                      disks:
+                        - name: containerdisk
+                          disk:
+                            bus: virtio
+                  volumes:
+                    - name: containerdisk
+                      containerDisk:
+                        image: "quay.io/kubevirt/fedora-cloud-container-disk-demo"
+      api_endpoints: []
+
+    test_steps:
+      setup:
+        - step_id: "SETUP-01"
+          action: "Verify both clusters are configured with CCLM network and feature gate"
+          command: "Check KubeVirt CRs on both clusters"
+          validation: "Both clusters configured correctly"
+        - step_id: "SETUP-02"
+          action: "Create a VM with a running workload on source cluster"
+          command: "Create VirtualMachine, wait for Running"
+          validation: "VM running with workload"
+      test_execution:
+        - step_id: "TEST-01"
+          action: "Initiate cross-cluster live migration to target cluster"
+          command: "Create cross-cluster VirtualMachineInstanceMigration"
+          validation: "Migration initiated"
+        - step_id: "TEST-02"
+          action: "Wait for migration to complete"
+          command: "Watch migration state until Succeeded"
+          validation: "Migration completed successfully"
+        - step_id: "TEST-03"
+          action: "Verify VM is running on target cluster"
+          command: "oc get vmi on target cluster"
+          validation: "VMI phase is Running on target"
+        - step_id: "TEST-04"
+          action: "Verify workload is intact"
+          command: "Check workload output/state on target"
+          validation: "Workload continues without interruption"
+        - step_id: "TEST-05"
+          action: "Verify proxy ports are cleaned up on both clusters"
+          command: "Check sync controller logs on both clusters"
+          validation: "No proxy listeners remaining on either cluster"
+      cleanup:
+        - step_id: "CLEANUP-01"
+          action: "Delete VM on target cluster"
+          command: "oc delete vm cclm-proxy-test-vm"
+        - step_id: "CLEANUP-02"
+          action: "Clean up any migration resources"
+          command: "Delete VirtualMachineInstanceMigration"
+
+    assertions:
+      - assertion_id: "ASSERT-01"
+        priority: "P0"
+        description: "Migration completes successfully"
+        condition: "Migration state == Succeeded"
+        failure_impact: "Core feature broken - cannot migrate VMs through proxy"
+      - assertion_id: "ASSERT-02"
+        priority: "P0"
+        description: "VM running on target cluster"
+        condition: "VMI phase == Running on target cluster"
+        failure_impact: "VM lost during migration"
+      - assertion_id: "ASSERT-03"
+        priority: "P0"
+        description: "Workload intact after migration"
+        condition: "Workload output/state unchanged"
+        failure_impact: "Data loss or service interruption during migration"
+      - assertion_id: "ASSERT-04"
+        priority: "P1"
+        description: "Proxy cleanup after migration"
+        condition: "No proxy listeners on either cluster"
+        failure_impact: "Resource leak accumulating over migrations"
+
+    dependencies:
+      kubernetes_resources:
+        - "VirtualMachine: cclm-proxy-test-vm"
+        - "VirtualMachineInstanceMigration: cross-cluster-migration"
+        - "NetworkAttachmentDefinition: cclm-nad"
+      external_tools:
+        - "oc CLI"
+        - "virtctl"
+      scenario_specific_rbac:
+        - "create on VirtualMachineInstanceMigration"

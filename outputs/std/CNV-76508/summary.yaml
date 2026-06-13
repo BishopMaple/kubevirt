@@ -1,0 +1,20 @@
+status: success
+jira_id: CNV-76508
+stp_source: outputs/stp/CNV-76508/CNV-76508_test_plan.md
+std_yaml: outputs/std/CNV-76508/CNV-76508_test_description.yaml
+test_counts:
+  total: 17
+  unit: 5
+  tier1: 11
+  tier2: 1
+stubs:
+  go: 16
+  python: 1
+go_files:
+  - cclm_proxy_unit_stubs_test.go
+  - cclm_proxy_config_stubs_test.go
+  - cclm_proxy_migration_stubs_test.go
+python_files:
+  - test_cclm_proxy_migration_stubs.py
+phase: phase1
+generated_date: "2026-06-13"
