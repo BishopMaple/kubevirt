@@ -94,6 +94,13 @@ type SynchronizationController struct {
 	syncReceivingConnectionMap *sync.Map
 	failedCloseConnections     *sync.Map
 	grpcServer                 *grpc.Server
+
+	// targetProxyManager handles CCLM proxy ports on the target side.
+	// It maps CCLM-facing ports to the real virt-handler ports.
+	targetProxyManager *ProxyMappingManager
+	// sourceProxyManager handles CCLM proxy ports on the source side.
+	// It maps in-cluster LM ports to the target sync controller's CCLM ports.
+	sourceProxyManager *ProxyMappingManager
 }
 
 func NewSynchronizationController(
@@ -131,6 +138,8 @@ func NewSynchronizationController(
 	syncController.syncOutboundConnectionMap = &sync.Map{}
 	syncController.syncReceivingConnectionMap = &sync.Map{}
 	syncController.failedCloseConnections = &sync.Map{}
+	syncController.targetProxyManager = NewProxyMappingManager()
+	syncController.sourceProxyManager = NewProxyMappingManager()
 
 	_, err := vmiInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    syncController.addVmiFunc,
@@ -206,11 +215,13 @@ func (s *SynchronizationController) deleteMigrationFunc(delObj interface{}) {
 			if err := s.closeConnectionForMigrationID(s.syncReceivingConnectionMap, migration.Spec.Receive.MigrationID); err != nil {
 				log.Log.Reason(err).Infof("unable to close connection for migrationID %s, possibly leaked connection", migration.Spec.Receive.MigrationID)
 			}
+			s.targetProxyManager.Close(migration.Spec.Receive.MigrationID)
 		} else if migration.Spec.SendTo != nil {
 			log.Log.V(4).Object(migration).Infof("closing outbound connection for migrationID %s", migration.Spec.SendTo.MigrationID)
 			if err := s.closeConnectionForMigrationID(s.syncOutboundConnectionMap, migration.Spec.SendTo.MigrationID); err != nil {
 				log.Log.Reason(err).Infof("unable to close connection for migrationID %s, possibly leaked connection", migration.Spec.SendTo.MigrationID)
 			}
+			s.sourceProxyManager.Close(migration.Spec.SendTo.MigrationID)
 		}
 	}
 }
@@ -293,6 +304,9 @@ func (s *SynchronizationController) closeConnections() {
 	s.syncOutboundConnectionMap.Range(closeMapConnections)
 	log.Log.V(1).Infof("closing inbound connections")
 	s.syncReceivingConnectionMap.Range(closeMapConnections)
+	log.Log.V(1).Infof("closing CCLM proxy mappings")
+	s.targetProxyManager.CloseAll()
+	s.sourceProxyManager.CloseAll()
 }
 
 func closeMapConnections(k, obj interface{}) bool {
@@ -635,6 +649,7 @@ func (s *SynchronizationController) handleSourceState(vmi *virtv1.VirtualMachine
 		if migration.Spec.SendTo != nil {
 			log.Log.Object(migration).Infof("completed migration for VMI %s/%s, closing outbound connections", migration.Namespace, migration.Spec.VMIName)
 			s.closeConnectionForMigrationID(s.syncOutboundConnectionMap, migration.Spec.SendTo.MigrationID)
+			s.sourceProxyManager.Close(migration.Spec.SendTo.MigrationID)
 		}
 	}
 
@@ -673,6 +688,36 @@ func (s *SynchronizationController) handleTargetState(vmi *virtv1.VirtualMachine
 		return nil
 	}
 
+	// CCLM proxy: if this is a decentralized migration and the target state
+	// has DirectMigrationNodePorts and NodeAddress, open CCLM proxy ports that
+	// forward to the real virt-handler ports, and modify the state being sent.
+	if migration.IsDecentralized() && targetState.DirectMigrationNodePorts != nil && targetState.NodeAddress != nil {
+		migrationID := ""
+		if migration.Spec.Receive != nil {
+			migrationID = migration.Spec.Receive.MigrationID
+		}
+		if migrationID != "" && !s.targetProxyManager.HasMappings(migrationID) {
+			syncIP := s.ip
+			if syncIP == "" && s.listener != nil {
+				syncIP = s.listener.Addr().(*net.TCPAddr).IP.String()
+			}
+			if syncIP == "" {
+				return fmt.Errorf("CCLM target proxy: cannot determine local sync IP for migration %s", migrationID)
+			}
+			remappedPorts, err := s.targetProxyManager.OpenProxyPorts(
+				migrationID, syncIP, *targetState.NodeAddress, targetState.DirectMigrationNodePorts,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to open CCLM target proxy ports: %v", err)
+			}
+			log.Log.Object(vmi).Infof("CCLM target proxy: remapped ports %v -> %v for migration %s",
+				targetState.DirectMigrationNodePorts, remappedPorts, migrationID)
+			// Modify the VMI status copy to use CCLM proxy addresses
+			vmi.Status.MigrationState.TargetState.NodeAddress = &syncIP
+			vmi.Status.MigrationState.TargetState.DirectMigrationNodePorts = remappedPorts
+		}
+	}
+
 	vmiStatusJson, err := json.Marshal(vmi.Status)
 	if err != nil {
 		return err
@@ -694,6 +739,7 @@ func (s *SynchronizationController) handleTargetState(vmi *virtv1.VirtualMachine
 		if migration.Spec.Receive != nil {
 			log.Log.Object(migration).Infof("completed migration for VMI %s/%s, closing receiving connections", migration.Namespace, migration.Spec.VMIName)
 			s.closeConnectionForMigrationID(s.syncReceivingConnectionMap, migration.Spec.Receive.MigrationID)
+			s.targetProxyManager.Close(migration.Spec.Receive.MigrationID)
 		}
 	}
 
@@ -1099,6 +1145,49 @@ func (s *SynchronizationController) SyncTargetMigrationStatus(ctx context.Contex
 	newVMI.Status.MigrationState.TargetState = remoteStatus.MigrationState.TargetState.DeepCopy()
 	newVMI.Status.MigratedVolumes = getMergedTargetMigratedVolumes(newVMI.Status.MigratedVolumes, remoteStatus.MigratedVolumes)
 	copyLegacyTargetFields(newVMI, remoteStatus.MigrationState)
+
+	// CCLM source-side proxy: if this is a decentralized migration and the target
+	// state has ports (already remapped to CCLM network by the target sync controller),
+	// open local in-cluster proxy ports that forward to the CCLM addresses.
+	if migration.IsDecentralized() && migration.Spec.SendTo != nil {
+		migrationID := migration.Spec.SendTo.MigrationID
+		if newVMI.Status.MigrationState.TargetDirectMigrationNodePorts != nil &&
+			newVMI.Status.MigrationState.TargetNodeAddress != "" &&
+			!s.sourceProxyManager.HasMappings(migrationID) {
+
+			syncIP := s.ip
+			if syncIP == "" && s.listener != nil {
+				syncIP = s.listener.Addr().(*net.TCPAddr).IP.String()
+			}
+			if syncIP == "" {
+				return &syncv1.VMIStatusResponse{
+					Message: fmt.Sprintf("failed to determine local sync IP for migrationID %s", request.MigrationID),
+				}, fmt.Errorf("CCLM source proxy: cannot determine local sync IP for migration %s", migrationID)
+			}
+			remappedPorts, proxyErr := s.sourceProxyManager.OpenProxyPorts(
+				migrationID, syncIP,
+				newVMI.Status.MigrationState.TargetNodeAddress,
+				newVMI.Status.MigrationState.TargetDirectMigrationNodePorts,
+			)
+			if proxyErr != nil {
+				return &syncv1.VMIStatusResponse{
+					Message: fmt.Sprintf("failed to open CCLM source proxy ports for migrationID %s", request.MigrationID),
+				}, fmt.Errorf("failed to open CCLM source proxy ports: %v", proxyErr)
+			}
+			log.Log.Object(newVMI).Infof("CCLM source proxy: remapped ports %v -> %v, address %s -> %s for migration %s",
+				newVMI.Status.MigrationState.TargetDirectMigrationNodePorts, remappedPorts,
+				newVMI.Status.MigrationState.TargetNodeAddress, syncIP, migrationID)
+			// Update both legacy fields and TargetState to maintain consistency
+			// between old-style and new-style migration state consumers.
+			newVMI.Status.MigrationState.TargetNodeAddress = syncIP
+			newVMI.Status.MigrationState.TargetDirectMigrationNodePorts = remappedPorts
+			if newVMI.Status.MigrationState.TargetState != nil {
+				newVMI.Status.MigrationState.TargetState.NodeAddress = &syncIP
+				newVMI.Status.MigrationState.TargetState.DirectMigrationNodePorts = remappedPorts
+			}
+		}
+	}
+
 	if !apiequality.Semantic.DeepEqual(vmi.Status.MigrationState, newVMI.Status.MigrationState) {
 		if err := s.patchVMI(ctx, vmi, newVMI); err != nil {
 			return &syncv1.VMIStatusResponse{
