@@ -13,6 +13,7 @@ go_library(
         "link_state.go",
         "multiqueue.go",
         "nad_live_update.go",
+        "nad_live_update_extended.go",
         "networkpolicy.go",
         "passt.go",
         "port_forward.go",
