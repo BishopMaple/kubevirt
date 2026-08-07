@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfield "k8s.io/apimachinery/pkg/util/validation/field"
 
 	v1 "kubevirt.io/api/core/v1"
@@ -258,4 +259,89 @@ var _ = Describe("Validate network source", func() {
 		causes := validator.Validate()
 		Expect(causes).To(BeEmpty())
 	})
+
+	DescribeTable("should reject invalid Multus NAD network name", func(networkName, expectedMsgSubstring string) {
+		spec := &v1.VirtualMachineInstanceSpec{}
+		spec.Domain.Devices.Interfaces = []v1.Interface{{Name: "default"}}
+		spec.Networks = []v1.Network{{
+			Name:          "default",
+			NetworkSource: v1.NetworkSource{Multus: &v1.MultusNetwork{NetworkName: networkName}},
+		}}
+
+		validator := admitter.NewValidator(k8sfield.NewPath("fake"), spec, stubClusterConfigChecker{})
+		causes := validator.Validate()
+		Expect(causes).To(HaveLen(1))
+		Expect(causes[0].Type).To(Equal(metav1.CauseTypeFieldValueInvalid))
+		Expect(causes[0].Message).To(ContainSubstring(expectedMsgSubstring))
+		Expect(causes[0].Field).To(Equal("fake.networks[0].multus.networkName"))
+	},
+		Entry("uppercase in name", "foo/UPPER", "is not valid"),
+		Entry("leading hyphen in name", "foo/-invalid", "is not valid"),
+		Entry("trailing hyphen in name", "foo/invalid-", "is not valid"),
+		Entry("empty namespace", "/name", "namespace must not be empty"),
+		Entry("empty name", "ns/", "name must not be empty"),
+		Entry("multiple slashes", "a/b/c", "expected format"),
+		Entry("trailing dot in standalone name", "not.valid.name.", "is not valid"),
+		Entry("uppercase standalone name", "UPPER", "is not valid"),
+		Entry("uppercase namespace", "UPPER/my-nad", "is not valid"),
+		Entry("dotted namespace (not a valid label)", "my.ns/my-nad", "is not valid"),
+	)
+
+	It("should report both namespace and name errors when both are invalid", func() {
+		spec := &v1.VirtualMachineInstanceSpec{}
+		spec.Domain.Devices.Interfaces = []v1.Interface{{Name: "default"}}
+		spec.Networks = []v1.Network{{
+			Name:          "default",
+			NetworkSource: v1.NetworkSource{Multus: &v1.MultusNetwork{NetworkName: "UPPER/UPPER"}},
+		}}
+
+		validator := admitter.NewValidator(k8sfield.NewPath("fake"), spec, stubClusterConfigChecker{})
+		causes := validator.Validate()
+		Expect(causes).To(HaveLen(2))
+		Expect(causes[0].Message).To(ContainSubstring("namespace"))
+		Expect(causes[1].Message).To(ContainSubstring("name"))
+	})
+
+	It("should report causes from multiple Multus networks with different errors", func() {
+		spec := &v1.VirtualMachineInstanceSpec{}
+		spec.Domain.Devices.Interfaces = []v1.Interface{
+			{Name: "net1"},
+			{Name: "net2"},
+		}
+		spec.Networks = []v1.Network{
+			{
+				Name:          "net1",
+				NetworkSource: v1.NetworkSource{Multus: &v1.MultusNetwork{NetworkName: "a/b/c"}},
+			},
+			{
+				Name:          "net2",
+				NetworkSource: v1.NetworkSource{Multus: &v1.MultusNetwork{NetworkName: "UPPER"}},
+			},
+		}
+
+		validator := admitter.NewValidator(k8sfield.NewPath("fake"), spec, stubClusterConfigChecker{})
+		causes := validator.Validate()
+		Expect(causes).To(HaveLen(2))
+		Expect(causes[0].Message).To(ContainSubstring("expected format"))
+		Expect(causes[1].Message).To(ContainSubstring("is not valid"))
+	})
+
+	DescribeTable("should accept valid Multus NAD network name", func(networkName string) {
+		spec := &v1.VirtualMachineInstanceSpec{}
+		spec.Domain.Devices.Interfaces = []v1.Interface{{Name: "default"}}
+		spec.Networks = []v1.Network{{
+			Name:          "default",
+			NetworkSource: v1.NetworkSource{Multus: &v1.MultusNetwork{NetworkName: networkName}},
+		}}
+
+		validator := admitter.NewValidator(k8sfield.NewPath("fake"), spec, stubClusterConfigChecker{})
+		causes := validator.Validate()
+		Expect(causes).To(BeEmpty())
+	},
+		Entry("simple name", "my-nad"),
+		Entry("namespaced name", "default/my-nad"),
+		Entry("namespaced name with numbers", "my-namespace/my-nad-123"),
+		Entry("name with dots (valid subdomain)", "my.nad"),
+		Entry("namespaced name with dots", "my-namespace/my.nad"),
+	)
 })
