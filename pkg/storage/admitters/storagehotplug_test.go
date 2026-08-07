@@ -141,7 +141,7 @@ var _ = Describe("Storage Hotplug Admitter", func() {
 		return res
 	}
 
-	makeCDRomDisks := func(indexes ...int) []v1.Disk {
+	makeCDRomDisksWithBus := func(bus v1.DiskBus, indexes ...int) []v1.Disk {
 		res := make([]v1.Disk, 0)
 		for _, index := range indexes {
 			bootOrder := uint(index + 1)
@@ -149,13 +149,17 @@ var _ = Describe("Storage Hotplug Admitter", func() {
 				Name: fmt.Sprintf("volume-name-%d", index),
 				DiskDevice: v1.DiskDevice{
 					CDRom: &v1.CDRomTarget{
-						Bus: "scsi",
+						Bus: bus,
 					},
 				},
 				BootOrder: &bootOrder,
 			})
 		}
 		return res
+	}
+
+	makeCDRomDisks := func(indexes ...int) []v1.Disk {
+		return makeCDRomDisksWithBus(v1.DiskBusSCSI, indexes...)
 	}
 
 	makeFilesystems := func(indexes ...int) []v1.Filesystem {
@@ -454,14 +458,30 @@ var _ = Describe("Storage Hotplug Admitter", func() {
 			makeFilesystems(),
 			makeStatus(1, 0),
 			makeExpected("Hotplug configuration for LUN [volume-name-1] requires bus to be 'scsi'. [invalid] is not permitted.", "")),
-		Entry("Should reject if we add disk with neither Disk nor LUN type",
+		Entry("Should accept hotplug of new CD-ROM disk with scsi bus",
 			makeVolumes(0, 1),
 			makeVolumes(0),
 			makeCDRomDisks(0, 1),
 			makeCDRomDisks(0),
 			makeFilesystems(),
 			makeStatus(1, 0),
-			makeExpected("Hotplug configuration for [volume-name-1] requires diskDevice of type 'disk' or 'lun' to be used.", "")),
+			nil),
+		Entry("Should accept hotplug of new CD-ROM disk with sata bus",
+			makeVolumes(0, 1),
+			makeVolumes(0),
+			makeCDRomDisksWithBus(v1.DiskBusSATA, 0, 1),
+			makeCDRomDisksWithBus(v1.DiskBusSATA, 0),
+			makeFilesystems(),
+			makeStatus(1, 0),
+			nil),
+		Entry("Should reject hotplug of new CD-ROM disk with virtio bus",
+			makeVolumes(0, 1),
+			makeVolumes(0),
+			makeCDRomDisksWithBus(v1.DiskBusVirtio, 0, 1),
+			makeCDRomDisksWithBus(v1.DiskBusVirtio, 0),
+			makeFilesystems(),
+			makeStatus(1, 0),
+			makeExpected("Hotplug configuration for CD-ROM [volume-name-1] requires bus to be 'scsi' or 'sata'. [virtio] is not permitted.", "")),
 		Entry("Should allow cd-rom inject",
 			makeVolumes(0, 1),
 			makeVolumes(0),
@@ -487,6 +507,14 @@ var _ = Describe("Storage Hotplug Admitter", func() {
 			makeFilesystems(),
 			makeStatus(1, 0),
 			makeExpected("mismatch between volumes declared (1) and required (2)", "")),
+		Entry("Should reject if we add disk with neither Disk, LUN, nor CDRom type",
+			makeVolumes(0, 1),
+			makeVolumes(0),
+			append(makeDisks(0), v1.Disk{Name: "volume-name-1"}),
+			makeDisks(0),
+			makeFilesystems(),
+			makeStatus(1, 0),
+			makeExpected("Hotplug configuration for [volume-name-1] requires diskDevice of type 'disk', 'LUN', or 'CD-ROM' to be used.", "")),
 		Entry("Should reject if we add disk with invalid boot order",
 			makeVolumes(0, 1),
 			makeVolumes(0),
