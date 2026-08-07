@@ -21,13 +21,18 @@ package cache
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	k8scache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
+
+	cmdclient "kubevirt.io/kubevirt/pkg/virt-handler/cmd-client"
+	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 )
 
 var _ = Describe("Domain Watcher", func() {
@@ -80,6 +85,77 @@ var _ = Describe("Domain Watcher", func() {
 		})
 	})
 
+	Context("getDomainWithRetry", func() {
+		It("should return domain on first successful attempt", func() {
+			expectedDomain := api.NewMinimalDomainWithNS("test-ns", "test-domain")
+			expectedDomain.ObjectMeta.UID = types.UID("test-uid")
+
+			factory := func(_ string) (cmdclient.LauncherClient, error) {
+				return &fakeLauncherClient{domain: expectedDomain, exists: true}, nil
+			}
+
+			domain := getDomainWithRetry("/fake/socket", 3, 1*time.Millisecond, factory)
+			Expect(domain).ToNot(BeNil())
+			Expect(domain.ObjectMeta.Name).To(Equal("test-domain"))
+			Expect(domain.ObjectMeta.Namespace).To(Equal("test-ns"))
+		})
+
+		It("should retry and succeed after transient connection failures", func() {
+			expectedDomain := api.NewMinimalDomainWithNS("test-ns", "test-domain")
+			expectedDomain.ObjectMeta.UID = types.UID("test-uid")
+
+			var attempts int32
+			factory := func(_ string) (cmdclient.LauncherClient, error) {
+				attempt := atomic.AddInt32(&attempts, 1)
+				if attempt <= 2 {
+					return nil, fmt.Errorf("connection refused")
+				}
+				return &fakeLauncherClient{domain: expectedDomain, exists: true}, nil
+			}
+
+			domain := getDomainWithRetry("/fake/socket", 3, 1*time.Millisecond, factory)
+			Expect(domain).ToNot(BeNil())
+			Expect(domain.ObjectMeta.Name).To(Equal("test-domain"))
+			Expect(atomic.LoadInt32(&attempts)).To(BeNumerically("==", 3))
+		})
+
+		It("should retry and succeed after transient GetDomain failures", func() {
+			expectedDomain := api.NewMinimalDomainWithNS("test-ns", "test-domain")
+
+			var attempts int32
+			factory := func(_ string) (cmdclient.LauncherClient, error) {
+				attempt := atomic.AddInt32(&attempts, 1)
+				if attempt == 1 {
+					return &fakeLauncherClient{err: fmt.Errorf("libvirt unavailable")}, nil
+				}
+				return &fakeLauncherClient{domain: expectedDomain, exists: true}, nil
+			}
+
+			domain := getDomainWithRetry("/fake/socket", 3, 1*time.Millisecond, factory)
+			Expect(domain).ToNot(BeNil())
+			Expect(domain.ObjectMeta.Name).To(Equal("test-domain"))
+			Expect(atomic.LoadInt32(&attempts)).To(BeNumerically("==", 2))
+		})
+
+		It("should return nil after exhausting all retries", func() {
+			factory := func(_ string) (cmdclient.LauncherClient, error) {
+				return nil, fmt.Errorf("connection refused")
+			}
+
+			domain := getDomainWithRetry("/fake/socket", 2, 1*time.Millisecond, factory)
+			Expect(domain).To(BeNil())
+		})
+
+		It("should return nil when domain does not exist", func() {
+			factory := func(_ string) (cmdclient.LauncherClient, error) {
+				return &fakeLauncherClient{exists: false}, nil
+			}
+
+			domain := getDomainWithRetry("/fake/socket", 3, 1*time.Millisecond, factory)
+			Expect(domain).To(BeNil())
+		})
+	})
+
 	Context("Stop() idempotency", func() {
 		It("should not panic when Stop is called twice", func() {
 			d := &domainWatcher{
@@ -104,3 +180,21 @@ var _ = Describe("Domain Watcher", func() {
 		})
 	})
 })
+
+// fakeLauncherClient is a minimal fake implementing cmdclient.LauncherClient
+// for testing getDomainWithRetry without a real gRPC connection.
+type fakeLauncherClient struct {
+	cmdclient.LauncherClient
+	domain *api.Domain
+	exists bool
+	err    error
+}
+
+func (f *fakeLauncherClient) GetDomain() (*api.Domain, bool, error) {
+	if f.err != nil {
+		return nil, false, f.err
+	}
+	return f.domain, f.exists, nil
+}
+
+func (f *fakeLauncherClient) Close() {}

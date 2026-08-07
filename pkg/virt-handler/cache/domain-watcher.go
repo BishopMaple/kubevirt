@@ -43,6 +43,15 @@ import (
 
 const socketDialTimeout = 5
 
+// listAllKnownDomains retry settings. During virt-handler startup the
+// sockets of pre-existing virt-launcher pods may not be immediately
+// reachable.  A small number of retries avoids marking running VMIs as
+// Failed due to a transient connection failure (CNV-89519).
+var (
+	listDomainRetries      = 3
+	listDomainRetryBackoff = 500 * time.Millisecond
+)
+
 type runServerFunc func(virtShareDir string, stopChan chan struct{}, c chan watch.Event, recorder record.EventRecorder, vmiStore cache.Store, watchInterval ...time.Duration) error
 
 var (
@@ -320,32 +329,54 @@ func (d *domainWatcher) listAllKnownDomains() ([]*api.Domain, error) {
 			continue
 		}
 
-		log.Log.V(3).Infof("List domains from sock %s", socketFile)
-		client, err := cmdclient.NewClient(socketFile)
-		if err != nil {
-			log.Log.Reason(err).Error("failed to connect to cmd client socket")
-			// Ignore failure to connect to client.
-			// These are all local connections via unix socket.
-			// A failure to connect means there's nothing on the other
-			// end listening.
-			continue
-		}
-		defer client.Close()
-
-		domain, exists, err := client.GetDomain()
-		if err != nil {
-			log.Log.Reason(err).Error("failed to list domains on cmd client socket")
-			// Failure to get domain list means that client
-			// was unable to contact libvirt. As soon as the connection
-			// is restored on the client's end, a domain notification will
-			// be sent.
-			continue
-		}
-		if exists {
+		domain := getDomainWithRetry(socketFile, listDomainRetries, listDomainRetryBackoff, cmdclient.NewClient)
+		if domain != nil {
 			domains = append(domains, domain)
 		}
 	}
 	return domains, nil
+}
+
+// clientFactoryFunc is the function signature for creating a cmd-client
+// from a socket path.  It is a parameter so tests can inject fakes.
+type clientFactoryFunc func(socketPath string) (cmdclient.LauncherClient, error)
+
+// getDomainWithRetry connects to a virt-launcher cmd-client socket and
+// retrieves the domain, retrying on transient failures.  This avoids
+// missing domains during the initial scan when virt-handler restarts
+// (e.g. during a DaemonSet rolling update) and a socket is momentarily
+// unavailable.
+func getDomainWithRetry(socketFile string, maxRetries int, backoff time.Duration, newClient clientFactoryFunc) *api.Domain {
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			log.Log.V(3).Infof("retrying domain lookup from sock %s (attempt %d/%d)", socketFile, attempt, maxRetries)
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+
+		log.Log.V(3).Infof("List domains from sock %s", socketFile)
+		client, err := newClient(socketFile)
+		if err != nil {
+			log.Log.Reason(err).Errorf("failed to connect to cmd client socket %s", socketFile)
+			lastErr = err
+			continue
+		}
+
+		domain, exists, err := client.GetDomain()
+		client.Close()
+		if err != nil {
+			log.Log.Reason(err).Errorf("failed to get domain on cmd client socket %s", socketFile)
+			lastErr = err
+			continue
+		}
+		if exists {
+			return domain
+		}
+		return nil
+	}
+	log.Log.Reason(lastErr).Errorf("giving up domain lookup from sock %s after %d retries", socketFile, maxRetries)
+	return nil
 }
 
 func (d *domainWatcher) List(_ metav1.ListOptions) (runtime.Object, error) {
